@@ -95,6 +95,10 @@ class ImportContent(BrowserView):
     # Example: ['/Plone/doormat/', '/Plone/import_files/']
     DROP_PATHS = []
 
+    # If set, only these paths will be imported
+    # Example: ['/Plone/important/', '/Plone/standard/item']
+    INCLUDE_PATHS = []
+
     # Default values for some fields
     # Example: {'which_price': 'normal'}
     DEFAULTS = {}
@@ -258,6 +262,14 @@ class ImportContent(BrowserView):
                 if drop in item["@id"]:
                     skip = True
                     logger.info(u"Skipping {}".format(item["@id"]))
+
+            # incase INCLUDE_PATHS are set, skip all items that are not included
+            if self.INCLUDE_PATHS:
+                skip = True
+                for include in self.INCLUDE_PATHS:
+                    if include in item["@id"]:
+                        skip = False
+
             if skip:
                 continue
 
