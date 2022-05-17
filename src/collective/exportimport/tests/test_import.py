@@ -550,11 +550,13 @@ class TestImport(unittest.TestCase):
 
         # Now import it programatically and return state as JSON
         import_view = portal.restrictedTraverse("@@import_content")
-        self.layer["request"].form['form.submitted'] = True
-        return_json = json.loads(import_view(
-            server_file="Document.json",
-            return_json=True,
-        ))
+        self.layer["request"].form["form.submitted"] = True
+        return_json = json.loads(
+            import_view(
+                server_file="Document.json",
+                return_json=True,
+            )
+        )
         self.assertEqual("success", return_json["state"])
         self.assertIn("Imported 1 items", return_json["msg"])
 
@@ -665,8 +667,7 @@ class TestImport(unittest.TestCase):
         self.assertEqual(portal["image"].image.data, dummy.Image().data)
 
     def test_import_imports_but_ignores_constrains(self):
-        """Constrains are exported and imported but not checked during import
-        """
+        """Constrains are exported and imported but not checked during import"""
         # First create some content to export.
         app = self.layer["app"]
         portal = self.layer["portal"]
@@ -688,6 +689,7 @@ class TestImport(unittest.TestCase):
         constrains.setLocallyAllowedTypes(["Document"])
         constrains.setImmediatelyAddableTypes(["Document"])
         from plone.api.exc import InvalidParameterError
+
         with self.assertRaises(InvalidParameterError):
             api.content.create(
                 container=self.about,
@@ -741,8 +743,7 @@ class TestImport(unittest.TestCase):
             )
 
     def test_import_workflow_history(self):
-        """workflow_history is imported last
-        """
+        """workflow_history is imported last"""
         # First create some content to export.
         app = self.layer["app"]
         portal = self.layer["portal"]
@@ -789,7 +790,8 @@ class TestImport(unittest.TestCase):
         self.assertEqual(history[1]["action"], "publish")
         self.assertEqual(
             history[1]["time"].asdatetime(),
-            publish_time.asdatetime().replace(microsecond=0))
+            publish_time.asdatetime().replace(microsecond=0),
+        )
 
         api.content.transition(transition="retract", obj=team)
         self.assertEqual(len(team.workflow_history["simple_publication_workflow"]), 3)
@@ -1026,8 +1028,12 @@ class TestImport(unittest.TestCase):
         data = json.loads(raw_data)
         self.assertEqual(data[0]["block"], 1)
         self.assertEqual(data[0]["localroles"], {"admin": ["Owner"]})
-        self.assertEqual(data[1]["localroles"], {"admin": ["Owner"], "peter": ["Owner"]})
-        self.assertEqual(data[2]["localroles"], {"admin": ["Owner"], "peter": ["Reviewer"]})
+        self.assertEqual(
+            data[1]["localroles"], {"admin": ["Owner"], "peter": ["Owner"]}
+        )
+        self.assertEqual(
+            data[2]["localroles"], {"admin": ["Owner"], "peter": ["Reviewer"]}
+        )
         self.assertNotIn("block", data[1])
         self.assertNotIn("block", data[2])
 
@@ -1035,7 +1041,7 @@ class TestImport(unittest.TestCase):
         del folder.__ac_local_roles_block__
         api.user.revoke_roles(username="peter", obj=doc1, roles=["Reviewer"])
         api.user.revoke_roles(username="peter", obj=doc2, roles=["Owner"])
-        self.assertEqual(doc1.__ac_local_roles__, {'admin': ['Owner']})
+        self.assertEqual(doc1.__ac_local_roles__, {"admin": ["Owner"]})
         folder.reindexObjectSecurity()
         doc1.reindexObjectSecurity()
         doc2.reindexObjectSecurity()
@@ -1048,12 +1054,22 @@ class TestImport(unittest.TestCase):
         self.assertIn("Imported 3 localroles", browser.contents)
         # The documents have the original local roles again.
         self.assertEqual(folder.__ac_local_roles_block__, 1)
-        self.assertEqual(doc1.__ac_local_roles__, {'admin': ['Owner'], 'peter': ['Reviewer']})
+        self.assertEqual(
+            doc1.__ac_local_roles__, {"admin": ["Owner"], "peter": ["Reviewer"]}
+        )
         # permissions are reindexed
-        self.assertTrue(api.user.has_permission("Review portal content", username="peter", obj=doc1))
-        self.assertFalse(api.user.has_permission("Modify portal content", username="peter", obj=doc1))
-        self.assertFalse(api.user.has_permission("Review portal content", username="peter", obj=doc2))
-        self.assertTrue(api.user.has_permission("Modify portal content", username="peter", obj=doc2))
+        self.assertTrue(
+            api.user.has_permission("Review portal content", username="peter", obj=doc1)
+        )
+        self.assertFalse(
+            api.user.has_permission("Modify portal content", username="peter", obj=doc1)
+        )
+        self.assertFalse(
+            api.user.has_permission("Review portal content", username="peter", obj=doc2)
+        )
+        self.assertTrue(
+            api.user.has_permission("Modify portal content", username="peter", obj=doc2)
+        )
 
     def test_import_richtext_with_html_entities(self):
         app = self.layer["app"]
@@ -1065,7 +1081,7 @@ class TestImport(unittest.TestCase):
             type="Document",
             id="doc1",
             title="Document 1",
-            text=RichTextValue(old_text, 'text/html', 'text/x-html-safe'),
+            text=RichTextValue(old_text, "text/html", "text/x-html-safe"),
         )
         transaction.commit()
 
@@ -1101,19 +1117,19 @@ class TestImport(unittest.TestCase):
         api.content.create(
             container=portal, type="Document", id="doc1", title="Document 1"
         )
-        api.content.rename(obj=portal['doc1'], new_id='doc1-moved')
+        api.content.rename(obj=portal["doc1"], new_id="doc1-moved")
         api.content.create(
             container=portal, type="Document", id="doc2", title="Document 2"
         )
-        api.content.rename(obj=portal['doc2'], new_id='doc2-moved')
+        api.content.rename(obj=portal["doc2"], new_id="doc2-moved")
         transaction.commit()
 
         # redirects are stored
         storage = getUtility(IRedirectionStorage, context=portal)
-        self.assertTrue(storage.has_path('/plone/doc1'))
-        self.assertTrue(storage.has_path('/plone/doc2'))
-        self.assertEqual(storage.get('/plone/doc1'), '/plone/doc1-moved')
-        self.assertEqual(storage.get('/plone/doc2'), '/plone/doc2-moved')
+        self.assertTrue(storage.has_path("/plone/doc1"))
+        self.assertTrue(storage.has_path("/plone/doc2"))
+        self.assertEqual(storage.get("/plone/doc1"), "/plone/doc1-moved")
+        self.assertEqual(storage.get("/plone/doc2"), "/plone/doc2-moved")
 
         # Export it.
         browser = self.open_page("@@export_redirects")
@@ -1126,14 +1142,14 @@ class TestImport(unittest.TestCase):
 
         # Now remove the redirects
         storage = getUtility(IRedirectionStorage, context=portal)
-        storage.remove('/plone/doc1')
-        storage.remove('/plone/doc2')
+        storage.remove("/plone/doc1")
+        storage.remove("/plone/doc2")
         transaction.commit()
 
         # redirects are gone
         storage = getUtility(IRedirectionStorage, context=portal)
-        self.assertFalse(storage.has_path('/plone/doc1'))
-        self.assertFalse(storage.has_path('/plone/doc2'))
+        self.assertFalse(storage.has_path("/plone/doc1"))
+        self.assertFalse(storage.has_path("/plone/doc2"))
 
         # Now import it.
         browser = self.open_page("@@import_redirects")
@@ -1144,10 +1160,10 @@ class TestImport(unittest.TestCase):
 
         # redirects are back
         storage = getUtility(IRedirectionStorage, context=portal)
-        self.assertTrue(storage.has_path('/plone/doc1'))
-        self.assertTrue(storage.has_path('/plone/doc2'))
-        self.assertEqual(storage.get('/plone/doc1'), '/plone/doc1-moved')
-        self.assertEqual(storage.get('/plone/doc2'), '/plone/doc2-moved')
+        self.assertTrue(storage.has_path("/plone/doc1"))
+        self.assertTrue(storage.has_path("/plone/doc2"))
+        self.assertEqual(storage.get("/plone/doc1"), "/plone/doc1-moved")
+        self.assertEqual(storage.get("/plone/doc2"), "/plone/doc2-moved")
 
     def test_import_versions(self):
         app = self.layer["app"]
@@ -1156,7 +1172,9 @@ class TestImport(unittest.TestCase):
         login(app, SITE_OWNER_NAME)
         if six.PY2:
             # in Plone 4.3 this is somehow not set...
-            IAnnotations(request)["plone.app.versioningbehavior-changeNote"] = u"initial_version_changeNote"
+            IAnnotations(request)[
+                "plone.app.versioningbehavior-changeNote"
+            ] = u"initial_version_changeNote"
         doc1 = api.content.create(
             container=portal,
             type="Document",
@@ -1181,13 +1199,13 @@ class TestImport(unittest.TestCase):
         modified(folder1)
         modified(doc2)
 
-        doc1.title= u"Document 1 with changed title"
+        doc1.title = u"Document 1 with changed title"
         modified(doc1)
-        doc2.title= u"Document 2 with changed title"
+        doc2.title = u"Document 2 with changed title"
         IAnnotations(request)["plone.app.versioningbehavior-changeNote"] = u"Föö bar"
         modified(doc2)
 
-        doc2.description= u"New description in revision 3"
+        doc2.description = u"New description in revision 3"
         IAnnotations(request)["plone.app.versioningbehavior-changeNote"] = u"I am new!"
         modified(doc2)
         folder1.title = u"Folder 1 with changed title"
@@ -1196,7 +1214,9 @@ class TestImport(unittest.TestCase):
         transaction.commit()
 
         repo_tool = api.portal.get_tool("portal_repository")
-        oldest = repo_tool.getHistory(doc2)._retrieve(doc2, 0, preserve=[], countPurged=False)
+        oldest = repo_tool.getHistory(doc2)._retrieve(
+            doc2, 0, preserve=[], countPurged=False
+        )
         self.assertEqual(oldest.object.title, u"Document 2")
 
         # Now export complete portal.
@@ -1260,12 +1280,16 @@ class TestImport(unittest.TestCase):
             return
 
         history_meta = history.retrieve(2)
-        self.assertEqual(history_meta["metadata"]["sys_metadata"]["comment"], u'Föö bar')
+        self.assertEqual(
+            history_meta["metadata"]["sys_metadata"]["comment"], u"Föö bar"
+        )
 
-        oldest = repo_tool.getHistory(doc2)._retrieve(doc2, 0, preserve=[], countPurged=False)
+        oldest = repo_tool.getHistory(doc2)._retrieve(
+            doc2, 0, preserve=[], countPurged=False
+        )
         self.assertEqual(oldest.object.title, u"Document 2")
 
         repo_tool.revert(portal["folder1"]["doc2"], 0)
         doc2 = portal["folder1"]["doc2"]
-        self.assertEqual(doc2.title, u'Document 2')
+        self.assertEqual(doc2.title, u"Document 2")
         self.assertEqual(doc2.description, u"A Description")
