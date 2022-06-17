@@ -297,7 +297,7 @@ class ExportContent(BrowserView):
                 self.safe_portal_type = fix_portal_type(obj.portal_type)
                 serializer = getMultiAdapter((obj, self.request), ISerializeToJson)
                 if getattr(aq_base(obj), "isPrincipiaFolderish", False):
-                    item = serializer(include_items=False)
+                    item = serializer()
                 else:
                     item = serializer()
                 item = self.update_export_data(item, obj)
