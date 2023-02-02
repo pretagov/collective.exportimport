@@ -2,6 +2,7 @@
 from App.config import getConfiguration
 from collective.exportimport import config
 from collective.exportimport.testing import COLLECTIVE_EXPORTIMPORT_FUNCTIONAL_TESTING
+from DateTime import DateTime
 from OFS.interfaces import IOrderedContainer
 from plone import api
 from plone.app.redirector.interfaces import IRedirectionStorage
@@ -14,6 +15,7 @@ from plone.namedfile.file import NamedImage
 from Products.CMFPlone.interfaces.constrains import ENABLED
 from Products.CMFPlone.interfaces.constrains import ISelectableConstrainTypes
 from Products.CMFPlone.tests import dummy
+from time import sleep
 from zope.annotation.interfaces import IAnnotations
 from zope.component import getUtility
 from zope.lifecycleevent import modified
@@ -674,7 +676,7 @@ class TestImport(unittest.TestCase):
         self.assertIn("image", portal.contentIds())
 
         # create a collection in self.about
-        collection = api.content.create(
+        api.content.create(
             container=self.about,
             type="Collection",
             id="collection",
@@ -1011,8 +1013,15 @@ class TestImport(unittest.TestCase):
             password="verysecret",
             roles=("Member",),
         )
+        api.user.create(
+            username="jane",
+            email="jane@example.org",
+            password="veryverysecret",
+            roles=("Member",),
+        )
         api.user.grant_roles(username="peter", obj=doc1, roles=["Reviewer"])
         api.user.grant_roles(username="peter", obj=doc2, roles=["Owner"])
+        api.user.grant_roles(username="jane", obj=portal, roles=["Reviewer", "Editor"])
         transaction.commit()
 
         # Export.
@@ -1039,21 +1048,56 @@ class TestImport(unittest.TestCase):
         api.user.revoke_roles(username="peter", obj=doc1, roles=["Reviewer"])
         api.user.revoke_roles(username="peter", obj=doc2, roles=["Owner"])
         self.assertEqual(doc1.__ac_local_roles__, {"admin": ["Owner"]})
+        api.user.revoke_roles(username="jane", obj=portal, roles=["Reviewer", "Editor"])
+        self.assertEqual(doc1.__ac_local_roles__, {"admin": ["Owner"]})
         folder.reindexObjectSecurity()
         doc1.reindexObjectSecurity()
         doc2.reindexObjectSecurity()
+        portal.reindexObjectSecurity()
+
+        self.assertEqual(
+            portal.__ac_local_roles__,
+            {"admin": ["Owner"]},
+        )
+
+        self.assertFalse(
+            api.user.has_permission(
+                "Review portal content", username="jane", obj=portal
+            )
+        )
+        self.assertFalse(
+            api.user.has_permission(
+                "Modify portal content", username="jane", obj=portal
+            )
+        )
 
         # Import and check.
         browser = self.open_page("@@import_localroles")
         upload = browser.getControl(name="jsonfile")
         upload.add_file(raw_data, "application/json", "localroles.json")
         browser.getForm(action="@@import_localroles").submit()
-        self.assertIn("Imported 3 localroles", browser.contents)
+
         # The documents have the original local roles again.
         self.assertEqual(folder.__ac_local_roles_block__, 1)
         self.assertEqual(
             doc1.__ac_local_roles__, {"admin": ["Owner"], "peter": ["Reviewer"]}
         )
+
+        self.assertTrue("Owner" in doc1.__ac_local_roles__["admin"])
+        self.assertTrue("Reviewer" in doc1.__ac_local_roles__["peter"])
+
+        self.assertTrue("Owner" in portal.__ac_local_roles__["admin"])
+        self.assertTrue("Reviewer" in portal.__ac_local_roles__["jane"])
+        self.assertTrue("Editor" in portal.__ac_local_roles__["jane"])
+
+        # remove annotations on request as they are used to cache local roles
+        # previous access to local roles has populated the cache
+        #
+        # Need to understand why IAnnotations(portal.REQUEST).clear() does not work
+        # in zope.annotation <= 3.5.0
+        # IAnnotations(self.layer["request"]).clear()
+        portal.REQUEST.__annotations__.clear()
+
         # permissions are reindexed
         self.assertTrue(
             api.user.has_permission("Review portal content", username="peter", obj=doc1)
@@ -1066,6 +1110,16 @@ class TestImport(unittest.TestCase):
         )
         self.assertTrue(
             api.user.has_permission("Modify portal content", username="peter", obj=doc2)
+        )
+        self.assertTrue(
+            api.user.has_permission(
+                "Modify portal content", username="jane", obj=portal
+            )
+        )
+        self.assertTrue(
+            api.user.has_permission(
+                "Review portal content", username="jane", obj=portal
+            )
         )
 
     def test_import_richtext_with_html_entities(self):
@@ -1290,3 +1344,88 @@ class TestImport(unittest.TestCase):
         doc2 = portal["folder1"]["doc2"]
         self.assertEqual(doc2.title, u"Document 2")
         self.assertEqual(doc2.description, u"A Description")
+
+    def test_reset_dates(self):
+        """Reset original modification and creation dates"""
+        # First create some content to export.
+        app = self.layer["app"]
+        portal = self.layer["portal"]
+        request = self.layer["request"]
+        login(app, SITE_OWNER_NAME)
+        self.create_demo_content()
+        transaction.commit()
+        old_creation_date = dateify(self.team.creation_date)
+        old_modification_date = dateify(self.team.modification_date)
+
+        # Now export the complete portal.
+        browser = self.open_page("@@export_content")
+        browser.getControl(name="portal_type").value = [
+            "Folder",
+            "Image",
+            "Link",
+            "Document",
+        ]
+        browser.getForm(action="@@export_content").submit(name="submit")
+        contents = browser.contents
+        if not browser.contents:
+            contents = DATA[-1]
+
+        # Remove the added content.
+        self.remove_demo_content()
+        transaction.commit()
+
+        # Now import it.
+        browser = self.open_page("@@import_content")
+        upload = browser.getControl(name="jsonfile")
+        upload.add_file(contents, "application/json", "Document.json")
+        browser.getForm(action="@@import_content").submit()
+        self.assertIn("Imported 6 items", browser.contents)
+
+        team = portal["about"]["team"].aq_base
+
+        # change modification and creation date
+        old = team.modification_date
+        sleep(1)
+        team.creation_date = DateTime()
+        team.reindexObject()
+        new = team.modification_date
+        self.assertNotEqual(old, new)
+
+        creation_date_migrated = dateify(team.creation_date_migrated)
+        modification_date_migrated = dateify(team.modification_date_migrated)
+        self.assertEqual(old_creation_date, creation_date_migrated)
+        self.assertEqual(old_modification_date, modification_date_migrated)
+
+        new_creation_date = dateify(team.creation_date)
+        new_modification_date = dateify(team.modification_date)
+        self.assertNotEqual(old_creation_date, new_creation_date)
+        self.assertNotEqual(old_modification_date, new_modification_date)
+
+        # reset the dates
+        request.form["form.submitted"] = True
+        view = api.content.get_view("reset_dates", portal, request)
+        view()
+
+        # now all dates should be the same as before the export
+        reset_creation_date = dateify(team.creation_date)
+        reset_modification_date = dateify(team.modification_date)
+        self.assertEqual(old_creation_date, reset_creation_date)
+        self.assertEqual(old_modification_date, reset_modification_date)
+        # the _migrated attributes are gone
+        self.assertIsNone(getattr(team, "creation_date_migrated", None))
+        self.assertIsNone(getattr(team, "cmodification_date_migrated", None))
+
+        # check if index and metadata are correct
+        catalog = api.portal.get_tool("portal_catalog")
+        brain = api.content.find(UID=team.UID())[0]
+        indexdata = catalog.getIndexDataForRID(brain.getRID())
+        metadata = catalog.getMetadataForRID(brain.getRID())
+        # metadata is correct
+        self.assertEqual(dateify(metadata["modified"]), reset_modification_date)
+        # index data is correct
+        convert = catalog._catalog.indexes["modified"]._convert
+        self.assertEqual(indexdata["modified"], convert(reset_modification_date))
+
+
+def dateify(value):
+    return value.asdatetime().replace(microsecond=0)

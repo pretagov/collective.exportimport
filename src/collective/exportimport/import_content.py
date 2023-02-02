@@ -319,7 +319,7 @@ class ImportContent(BrowserView):
             container = self.handle_container(item)
 
             if not container:
-                logger.info(
+                logger.warning(
                     u"No container (parent was {}) found for {} {}".format(
                         item["parent"]["@type"], item["@type"], item["@id"]
                     )
@@ -327,7 +327,7 @@ class ImportContent(BrowserView):
                 continue
 
             if not getattr(aq_base(container), "isPrincipiaFolderish", False):
-                logger.info(
+                logger.warning(
                     u"Container {} for {} is not folderish".format(
                         container.absolute_url(), item["@id"]
                     )
@@ -338,12 +338,12 @@ class ImportContent(BrowserView):
 
             # Handle existing content
             self.update_existing = False
-            if new_id in container:
+            if item["id"] in container:
                 if self.handle_existing_content == 0:
                     # Skip
                     logger.info(
                         u"{} ({}) already exists. Skipping it.".format(
-                            new_id, item["@id"]
+                            item["id"], item["@id"]
                         )
                     )
                     continue
@@ -352,29 +352,28 @@ class ImportContent(BrowserView):
                     # Replace content before creating it new
                     logger.info(
                         u"{} ({}) already exists. Replacing it.".format(
-                            new_id, item["@id"]
+                            item["id"], item["@id"]
                         )
                     )
-                    api.content.delete(container[new_id], check_linkintegrity=False)
+                    api.content.delete(container[item["id"]], check_linkintegrity=False)
 
                 elif self.handle_existing_content == 2:
                     # Update existing item
                     logger.info(
                         u"{} ({}) already exists. Updating it.".format(
-                            new_id, item["@id"]
+                            item["id"], item["@id"]
                         )
                     )
                     self.update_existing = True
-                    new = container[new_id]
+                    new = container[item["id"]]
 
                 else:
                     # Create with new id. Speed up by using random id.
-                    duplicate = new_id
-                    new_id = "{}-{}".format(new_id, random.randint(1000, 9999))
-                    item["id"] = new_id
+                    duplicate = item["id"]
+                    item["id"] = "{}-{}".format(item["id"], random.randint(1000, 9999))
                     logger.info(
                         u"{} ({}) already exists. Created as {}".format(
-                            duplicate, item["@id"], new_id
+                            duplicate, item["@id"], item["id"]
                         )
                     )
 
@@ -684,12 +683,28 @@ class ImportContent(BrowserView):
         if constrains is None:
             return
         constrains.setConstrainTypesMode(ENABLED)
-        locally_allowed_types = item["exportimport.constrains"]["locally_allowed_types"]
-        constrains.setLocallyAllowedTypes(locally_allowed_types)
+
+        locally_allowed_types = item["exportimport.constrains"][
+            "locally_allowed_types"
+        ]
+        try:
+            constrains.setLocallyAllowedTypes(locally_allowed_types)
+        except ValueError:
+            logger.warning(
+                "Cannot setLocallyAllowedTypes on %s", item["@id"],
+                exc_info=True
+            )
+
         immediately_addable_types = item["exportimport.constrains"][
             "immediately_addable_types"
         ]
-        constrains.setImmediatelyAddableTypes(immediately_addable_types)
+        try:
+            constrains.setImmediatelyAddableTypes(immediately_addable_types)
+        except ValueError:
+            logger.warning(
+                "Cannot setImmediatelyAddableTypes on %s", item["@id"],
+                exc_info=True
+            )
 
     def import_review_state(self, obj, item):
         """Try to set the original review_state. Overwrite to customize or skip."""
@@ -831,6 +846,9 @@ class ImportContent(BrowserView):
             brains = api.content.find(UID=item["parent"]["UID"])
             if brains:
                 return brains[0].getObject()
+
+        if item["parent"]["@type"] == "Plone Site":
+            return api.portal.get()
 
         # If the item is missing look for a item with the path of the old parent
         parent_url = unquote(item["parent"]["@id"])

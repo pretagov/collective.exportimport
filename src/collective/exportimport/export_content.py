@@ -287,8 +287,11 @@ class ExportContent(BrowserView):
                 logger.info(u"Handled {} items...".format(index))
             try:
                 obj = brain.getObject()
-            except Exception as e:
+            except Exception:
                 logger.exception(u"Error getting brain %s", brain.getPath(), exc_info=True)
+                continue
+            if obj is None:
+                logger.error(u"brain.getObject() is None %s", brain.getPath())
                 continue
             obj = self.global_obj_hook(obj)
             if not obj:
@@ -303,7 +306,7 @@ class ExportContent(BrowserView):
                 item = self.update_export_data(item, obj)
 
                 yield item
-            except Exception as e:
+            except Exception:
                 logger.exception(u"Error exporting %s", obj.absolute_url(), exc_info=True)
 
     def portal_types(self):
@@ -313,6 +316,8 @@ class ExportContent(BrowserView):
         results = []
         query = self.build_query()
         for fti in portal_types.listTypeInfo():
+            if fti.id in config.SKIPPED_CONTENTTYPE_IDS:
+                continue
             query["portal_type"] = fti.id
             number = len(catalog.unrestrictedSearchResults(**query))
             if number >= 1:
@@ -339,7 +344,8 @@ class ExportContent(BrowserView):
 
         # Add uuid of parent to simplify getting parent during import
         parent = obj.__parent__
-        item["parent"]["UID"] = IUUID(parent, None)
+        if item["parent"]:
+            item["parent"]["UID"] = IUUID(parent, None)
 
         item = self.fix_url(item, obj)
         item = self.export_constraints(item, obj)

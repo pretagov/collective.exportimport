@@ -2,10 +2,40 @@ Changelog
 =========
 
 
-1.7 (unreleased)
+1.8 (unreleased)
 ----------------
 
 - Nothing changed yet.
+
+
+1.7 (2023-01-20)
+----------------
+
+- Filter out 'Discussion Item' in content type export list. Comments have their own export and
+  import views. A normal content type export for comments will raise a KeyError when trying to find
+  the parent. (#112)
+  [fredvd]
+
+- Be more specific in the import_translation endpoint condition to install in a site with p.a.multilingual 1.x
+  [erral]
+
+- Fix importing hidden portlets as visible. (#152)
+  [pbauer]
+
+- Use ``Language=all`` when querying TranslationGroup items
+  [erral]
+
+- Fix members import, by handling members that already exist.
+  [sunew]
+
+- Don't use new_id because a hook can change ``item["id"]``
+  [pbauer]
+
+- Support exporting the blob-path without having access to the blobs.
+  [pbauer]
+
+- Set image-variants in html-fields when running @@fix_html targeting in Plone 6.
+  [pbauer]
 
 
 1.6 (2022-10-07)
@@ -95,7 +125,7 @@ Changelog
 1.4 (2022-01-07)
 ----------------
 
-- Fix `debug` flag in `ExportRelations`
+- Fix ``debug`` flag in ``ExportRelations``
   [petschki]
 
 - Deserialize portlet-data using restapi to fix importing RichText.

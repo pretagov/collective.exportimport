@@ -25,7 +25,6 @@ from zope.schema.interfaces import IVocabularyTokenized
 
 import base64
 import logging
-import os
 import pkg_resources
 import six
 
@@ -182,15 +181,6 @@ class ChoiceFieldSerializer(DefaultFieldSerializer):
         return json_compatible(value)
 
 
-def get_relative_blob_path(obj, full_path):
-    # Get blob path relative from the blobstorage root.
-    db = obj._p_jar.db()
-    base_dir = db._storage.fshelper.base_dir
-    if not full_path.startswith(base_dir):
-        return full_path
-    return full_path[len(base_dir) :]
-
-
 # Custom Serializers for Archetypes
 
 
@@ -326,10 +316,10 @@ if HAS_AT:
             return json_compatible(result)
 
     def get_at_blob_path(obj):
-        full_path = obj.getBlob().committed()
-        if not os.path.exists(full_path):
-            return
-        return get_relative_blob_path(obj, full_path)
+        oid = obj.getBlob()._p_oid
+        tid = obj._p_serial
+        db = obj._p_jar.db()
+        return db._storage.fshelper.layout.getBlobFilePath(oid, tid)
 
     @adapter(IBlobImageField, IBaseObject, IPathBlobsMarker)
     @implementer(IFieldSerializer)
@@ -458,10 +448,10 @@ if HAS_AT and HAS_PAC:
 
 
 def get_dx_blob_path(obj):
-    full_path = obj._blob.committed()
-    if not os.path.exists(full_path):
-        return
-    return get_relative_blob_path(obj, full_path)
+    oid = obj._blob._p_oid
+    tid = obj._p_serial
+    db = obj._p_jar.db()
+    return db._storage.fshelper.layout.getBlobFilePath(oid, tid)
 
 
 @adapter(INamedFileField, IDexterityContent, IPathBlobsMarker)

@@ -59,8 +59,19 @@ except pkg_resources.DistributionNotFound:
 else:
     from z3c.relationfield import RelationValue
 
+try:
+    pam_version = pkg_resources.get_distribution("plone.app.multilingual")
+    if pam_version.version < "2.0.0":
+        IS_PAM_1 = True
+    else:
+        IS_PAM_1 = False
+except pkg_resources.DistributionNotFound:
+    IS_PAM_1 = False
+
 
 logger = logging.getLogger(__name__)
+
+PORTAL_PLACEHOLDER = "<Portal>"
 
 
 class BaseExport(BrowserView):
@@ -107,7 +118,9 @@ class BaseExport(BrowserView):
 class ExportRelations(BaseExport):
     """Export all relations"""
 
-    def __call__(self, download_to_server=False, debug=False, include_linkintegrity=False):
+    def __call__(
+        self, download_to_server=False, debug=False, include_linkintegrity=False
+    ):
         self.title = "Export relations"
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
@@ -130,7 +143,10 @@ class ExportRelations(BaseExport):
                 ref_catalog = reference_catalog._catalog
                 for rid in ref_catalog.data:
                     rel = ref_catalog[rid]
-                    if not include_linkintegrity and rel.relationship == "isReferencing":
+                    if (
+                        not include_linkintegrity
+                        and rel.relationship == "isReferencing"
+                    ):
                         continue
                     source = uuidToObject(rel.sourceUID)
                     target = uuidToObject(rel.targetUID)
@@ -158,7 +174,10 @@ class ExportRelations(BaseExport):
             if relation_catalog:
                 portal_catalog = getToolByName(self.context, "portal_catalog")
                 for rel in relation_catalog.findRelations():
-                    if not include_linkintegrity and rel.from_attribute == "isReferencing":
+                    if (
+                        not include_linkintegrity
+                        and rel.from_attribute == "isReferencing"
+                    ):
                         continue
                     try:
                         rel_from_path_and_rel_to_path = rel.from_path and rel.to_path
@@ -359,7 +378,10 @@ class ExportTranslations(BaseExport):
             return results
 
         for uid in portal_catalog.uniqueValuesFor("TranslationGroup"):
-            brains = portal_catalog(TranslationGroup=uid)
+            query = {"TranslationGroup": uid}
+            if IS_PAM_1:
+                query.update({"Language": "all"})
+            brains = portal_catalog(query)
 
             if len(brains) < 2:
                 # logger.info(u'Skipping...{} {}'.format(uid, brains))
@@ -402,12 +424,18 @@ class ExportLocalRoles(BaseExport):
 
         portal = api.portal.get()
         portal.ZopeFindAndApply(portal, search_sub=True, apply_func=self.get_localroles)
+
+        self.get_root_localroles()
+
         return self.results
 
     def get_localroles(self, obj, path):
         uid = IUUID(obj, None)
         if not uid:
             return
+        self._get_localroles(obj, uid)
+
+    def _get_localroles(self, obj, uid):
         localroles = None
         block = None
         obj = aq_base(obj)
@@ -425,6 +453,10 @@ class ExportLocalRoles(BaseExport):
             if item is None:
                 return
             self.results.append(item)
+
+    def get_root_localroles(self):
+        site = api.portal.get()
+        self._get_localroles(site, PORTAL_PLACEHOLDER)
 
     def item_hook(self, item):
         return item
@@ -483,11 +515,16 @@ class ExportDefaultPages(BaseExport):
     def all_default_pages(self):
         results = []
         catalog = api.portal.get_tool("portal_catalog")
-        for brain in catalog.unrestrictedSearchResults(is_folderish=True, sort_on="path"):
+        for brain in catalog.unrestrictedSearchResults(
+            is_folderish=True, sort_on="path"
+        ):
             try:
                 obj = brain.getObject()
-            except Exception as e:
+            except Exception:
                 logger.info(u"Error getting obj for %s", brain.getURL(), exc_info=True)
+                continue
+            if obj is None:
+                logger.error(u"brain.getObject() is None %s", brain.getPath())
                 continue
             if IPloneSiteRoot.providedBy(obj):
                 # Site root is handled below (in Plone 6 it is returned by a catalog search)
@@ -495,8 +532,12 @@ class ExportDefaultPages(BaseExport):
 
             try:
                 data = self.get_default_page_info(obj)
-            except Exception as e:
-                logger.info(u"Error exporting default_page for %s", obj.absolute_url(), exc_info=True)
+            except Exception:
+                logger.info(
+                    u"Error exporting default_page for %s",
+                    obj.absolute_url(),
+                    exc_info=True,
+                )
                 continue
 
             if data:
@@ -509,7 +550,7 @@ class ExportDefaultPages(BaseExport):
             if data:
                 data["uuid"] = config.SITE_ROOT
                 results.append(data)
-        except Exception as e:
+        except Exception:
             logger.info(u"Error exporting default_page for portal", exc_info=True)
 
         return results
@@ -521,11 +562,11 @@ class ExportDefaultPages(BaseExport):
         # and the property default_page on the object.
         # We don't care about other cases
         # 1. obj is folderish, check for a index_html in it
-        if 'index_html' in obj:
-            default_page = 'index_html'
+        if "index_html" in obj:
+            default_page = "index_html"
         else:
             # 2. Check attribute 'default_page'
-            default_page = getattr(aq_base(obj), 'default_page', [])
+            default_page = getattr(aq_base(obj), "default_page", [])
 
         if default_page and default_page in obj:
             default_page_obj = obj.get(default_page)
@@ -552,18 +593,27 @@ class ExportDiscussion(BaseExport):
 
     def all_discussions(self):
         results = []
-        for brain in api.content.find(object_provides=IContentish.__identifier__, sort_on="path"):
+        for brain in api.content.find(
+            object_provides=IContentish.__identifier__, sort_on="path"
+        ):
             try:
                 obj = brain.getObject()
+                if obj is None:
+                    logger.error(u"brain.getObject() is None %s", brain.getPath())
+                    continue
                 conversation = IConversation(obj, None)
                 if not conversation:
                     continue
-                serializer = getMultiAdapter((conversation, self.request), ISerializeToJson)
+                serializer = getMultiAdapter(
+                    (conversation, self.request), ISerializeToJson
+                )
                 output = serializer()
                 if output:
                     results.append({"uuid": IUUID(obj), "conversation": output})
-            except Exception as e:
-                logger.info("Error exporting comments for %s", brain.getURL(), exc_info=True)
+            except Exception:
+                logger.info(
+                    "Error exporting comments for %s", brain.getURL(), exc_info=True
+                )
                 continue
         return results
 

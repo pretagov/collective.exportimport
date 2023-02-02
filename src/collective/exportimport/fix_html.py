@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from collections import defaultdict
 from logging import getLogger
 from plone import api
+from plone.api.exc import InvalidParameterError
 from plone.app.portlets.interfaces import IPortletTypeInterface
 from plone.app.textfield import RichTextValue
 from plone.app.textfield.interfaces import IRichText
@@ -299,6 +300,13 @@ def fix_html_in_content_fields(context=None, commit=True, fixers=None):
             fixers = [fixers]
         fixers = [html_fixer] + [i for i in fixers if callable(i)]
 
+    try:
+        # Add img_variant_fixer if we are running this in Plone 6.x
+        api.portal.get_registry_record("plone.picture_variants")
+        fixers.append(img_variant_fixer)
+    except InvalidParameterError:
+        pass
+
     # Find RichText field for all registered types
     types_with_richtext_fields = defaultdict(list)
     for portal_type in portal_types.keys():
@@ -320,6 +328,9 @@ def fix_html_in_content_fields(context=None, commit=True, fixers=None):
             obj = brain.getObject()
         except Exception:
             logger.warning("Could not get object for: %s", brain.getPath(), exc_info=True)
+            continue
+        if obj is None:
+            logger.error(u"brain.getObject() is None %s", brain.getPath())
             continue
         try:
             changed = False
@@ -354,7 +365,8 @@ def fix_html_in_content_fields(context=None, commit=True, fixers=None):
 
         if fixed_items != 0 and not fixed_items % 1000:
             # Commit every 1000 changed items.
-            logger.info(u"Fix html for %s (%s) of %s items (changed %s fields in %s items)",
+            logger.info(
+                u"Fix html for %s (%s) of %s items (changed %s fields in %s items)",
                 index, round(index / total * 100, 2), total, fixed_fields, fixed_items)
             if commit:
                 transaction.commit()
@@ -428,3 +440,33 @@ def fix_html_in_portlets(context=None):
     f = lambda obj, path: get_portlets(obj, path, fix_count)
     portal.ZopeFindAndApply(portal, search_sub=True, apply_func=f)
     return len(fix_count)
+
+
+def img_variant_fixer(text, obj=None):
+    """Set image-variants"""
+    if not text:
+        return text
+
+    picture_variants = api.portal.get_registry_record("plone.picture_variants")
+    scale_variant_mapping = {
+        k: v["sourceset"][0]["scale"] for k, v in picture_variants.items()
+    }
+    scale_variant_mapping["thumb"] = "mini"
+    fallback_variant = "preview"
+
+    soup = BeautifulSoup(text, "html.parser")
+    for tag in soup.find_all("img"):
+        if "data-val" not in tag.attrs:
+            # maybe external image
+            continue
+        scale = tag["data-scale"]
+        variant = scale_variant_mapping.get(scale, fallback_variant)
+        tag["data-picturevariant"] = variant
+
+        classes = tag["class"]
+        new_class = "picture-variant-{}".format(variant)
+        if new_class not in classes:
+            classes.append(new_class)
+            tag["class"] = classes
+
+    return soup.decode()

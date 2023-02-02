@@ -5,6 +5,7 @@ from collective.exportimport import config
 from datetime import datetime
 from OFS.interfaces import IOrderedContainer
 from operator import itemgetter
+from collective.exportimport.export_other import PORTAL_PLACEHOLDER
 from plone import api
 from plone.app.discussion.comment import Comment
 from plone.app.discussion.interfaces import IConversation
@@ -55,6 +56,7 @@ except ImportError:
 
 if six.PY2:
     from HTMLParser import HTMLParser
+
     unescape = HTMLParser().unescape
 else:
     from html import unescape
@@ -164,6 +166,11 @@ if HAS_PAM:  # noqa: C901
         except TypeError as e:
             logger.info(u"Item is not translatable: {}".format(e))
 
+else:
+    class ImportTranslations(BrowserView):
+        def __call__(self, jsonfile=None, return_json=False):
+            return "This view only works when using plone.app.multilingual >= 2.0.0"
+
 
 class ImportMembers(BrowserView):
     """Import plone groups and members"""
@@ -248,7 +255,13 @@ class ImportMembers(BrowserView):
                     u"Skipping user {} without email: {}".format(username, item)
                 )
                 continue
-            pr.addMember(username, password, roles, [], item)
+            try:
+                pr.addMember(username, password, roles, [], item)
+            except ValueError:
+                logger.info(
+                    u"ValueError {} : {}".format(username, item)
+                )
+                continue
             for group in groups:
                 if group not in groupsDict.keys():
                     groupsDict[group] = acl.getGroupById(group)
@@ -272,7 +285,7 @@ class ImportRelations(BrowserView):
         if not HAS_RELAPI and not HAS_PLONE6:
             api.portal.show_message(
                 "You need either Plone 6 or collective.relationhelpers to import relations",
-                self.request
+                self.request,
             )
             return self.index()
 
@@ -389,7 +402,8 @@ class ImportLocalRoles(BrowserView):
         for index, item in enumerate(data, start=1):
             obj = api.content.get(UID=item["uuid"])
             if not obj:
-                continue
+                if item["uuid"] == PORTAL_PLACEHOLDER:
+                    obj = api.portal.get()
             if item.get("localroles"):
                 localroles = item["localroles"]
                 for userid in localroles:
@@ -400,12 +414,16 @@ class ImportLocalRoles(BrowserView):
             if item.get("block"):
                 obj.__ac_local_roles_block__ = 1
                 logger.debug(
-                    u"Diable acquisition of local roles on {}".format(
+                    u"Disable acquisition of local roles on {}".format(
                         obj.absolute_url()
                     )
                 )
             if not index % 1000:
-                logger.info(u"Set local roles on {} ({}%) of {} items".format(index, round(index / total * 100, 2), total))
+                logger.info(
+                    u"Set local roles on {} ({}%) of {} items".format(
+                        index, round(index / total * 100, 2), total
+                    )
+                )
             results += 1
         if results:
             logger.info("Reindexing Security")
@@ -463,7 +481,11 @@ class ImportOrdering(BrowserView):
                 continue
             ordered.moveObjectToPosition(obj.getId(), item["order"])
             if not index % 1000:
-                logger.info(u"Ordered {} ({}%) of {} items".format(index, round(index / total * 100, 2), total))
+                logger.info(
+                    u"Ordered {} ({}%) of {} items".format(
+                        index, round(index / total * 100, 2), total
+                    )
+                )
             results += 1
         return results
 
@@ -518,7 +540,11 @@ class ImportDefaultPages(BrowserView):
                 # fallback for old export versions
                 default_page = item["default_page"]
             if default_page not in obj:
-                logger.info(u"Default page not a child: %s not in %s", default_page, obj.absolute_url())
+                logger.info(
+                    u"Default page not a child: %s not in %s",
+                    default_page,
+                    obj.absolute_url(),
+                )
                 continue
 
             if default_page == "index_html":
@@ -529,7 +555,9 @@ class ImportDefaultPages(BrowserView):
                 obj.setDefaultPage(default_page.encode("utf-8"))
             else:
                 obj.setDefaultPage(default_page)
-            logger.debug(u"Set %s as default page for %s", default_page, obj.absolute_url())
+            logger.debug(
+                u"Set %s as default page for %s", default_page, obj.absolute_url()
+            )
             results += 1
         return results
 
@@ -709,7 +737,7 @@ def register_portlets(obj, item):
 
             # set visibility setting
             visible = portlet_data.get("visible")
-            if visible:
+            if visible is not None:
                 settings = IPortletAssignmentSettings(assignment)
                 settings["visible"] = visible
 
@@ -721,19 +749,26 @@ def register_portlets(obj, item):
                     continue
                 field = field.bind(assignment)
                 # deserialize data (e.g. for RichText)
-                deserializer = queryMultiAdapter((field, obj, request), IFieldDeserializer)
+                deserializer = queryMultiAdapter(
+                    (field, obj, request), IFieldDeserializer
+                )
                 if deserializer is not None:
                     try:
                         value = deserializer(value)
                     except Exception as e:
-                        logger.info(u"Could not import portlet data {} for field {} on {}: {}".format(
-                            value, field, obj.absolute_url(), str(e)
-                        ))
+                        logger.info(
+                            u"Could not import portlet data {} for field {} on {}: {}".format(
+                                value, field, obj.absolute_url(), str(e)
+                            )
+                        )
                         continue
                 field.set(assignment, value)
 
-            logger.info(u"Added {} '{}' to {} of {}".format(
-                portlet_type, name, manager_name, obj.absolute_url()))
+            logger.info(
+                u"Added {} '{}' to {} of {}".format(
+                    portlet_type, name, manager_name, obj.absolute_url()
+                )
+            )
             results += 1
 
     for blacklist_status in item.get("blacklist_status", []):
