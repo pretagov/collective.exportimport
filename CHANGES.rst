@@ -2,10 +2,120 @@ Changelog
 =========
 
 
-1.8 (unreleased)
+1.11 (unreleased)
+-----------------
+
+- Fix ``KeyError: time`` when importing content with a workflow that does not have the ``time`` variable.
+  [maurits]
+
+- Allow to use fix_html_in_content_fields without applying the default html_fixer.
+  [pbauer]
+
+- Try to restore broken blobs when exporting content.
+  [thet]
+
+- When exporting into separate JSON files write also the error in a separate errors.json file.
+  This fixes an error at the end of the export and no errors being written.
+  [thet]
+
+- Add support for ATTopic export_content
+  [avoinea]
+
+- Add principals to groups that already exist during import (#228)
+  [pbauer]
+
+1.10 (2023-10-11)
+-----------------
+
+- Don't re-use `mapping` variable when migrating portlet data.
+  [witsch]
+
+- Fix editing revision author - refs #216
+  [avoinea]
+
+- Better support for portal import which avoids parsing JSON twice.
+  [gotcha]
+
+- Migrate portlets on site root.
+  [ThibautBorn]
+
+- Support export & import to have one separate json-file per content item.
+  [pbauer]
+
+
+1.9 (2023-05-18)
 ----------------
 
-- Nothing changed yet.
+- Allow passing custom filenames to exports
+  [pbauer]
+
+- Support export and import of Plone Site root (using update strategy).
+  [pbauer]
+
+- Fix blob export when Connection uses TmpStore
+  [gotcha, pbauer]
+
+- Fix portlet richtext field import
+  [mpeeters]
+
+- Add portlet location on exported data
+  [mpeeters]
+
+- Migrate root of portlets that used a path in plone4 to using a uid (navigation, search, events, collection).
+  [pbauer]
+
+- Make export of discussions and portlets contextual
+  [mpeeters]
+
+- Fix critical bug when importing groups: Do not import groups that a groups belongs to as members of the new group.
+  This could have caused groups to have more privileges than they should.
+  [pbauer]
+
+
+1.8 (2023-04-20)
+----------------
+
+- Import: run set_uuid method before we call custom hooks, so the hooks have access to
+  the item UUID. Fix #185.
+- Document COLLECTIVE_EXPORTIMPORT_CENTRAL_DIRECTORY in README.
+  [fredvd]
+
+- Add Spanish translation.
+  [macagua]
+
+- Add i18n support.
+  [macagua]
+
+- Fix html: improve mapping from scale to picture variant.  [maurits]
+
+- Allow overriding the fallback variant in img_variant_fixer.
+  Use 'medium' by default.
+  [maurits]
+
+- Let fix_html view work on the current context.  [maurits]
+
+- Fix the way we get a blob path. (#180)
+  [ale-rt]
+
+- Create documents as containers for items without parent when documents are folderish.
+  [JeffersonBledsoe]
+
+- Add support for passing any iterator as data-source to the import.
+  [pbauer]
+
+- Add example for importing collective.jsonify data to documentation.
+  [pbauer]
+
+- Better serialization of Topics:
+  - Use newer criteria added in Plone 5
+  - Add fallback for some criteria
+  - Export sort_on and sort_reversed
+  - Export customView as tabular_view
+  [pbauer]
+
+- Always import discussions independent if discussion support is enabled or not
+  on a particular content object (#182)
+  [ajung]
 
 
 1.7 (2023-01-20)

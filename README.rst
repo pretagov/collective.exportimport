@@ -27,7 +27,7 @@ Export and import all kinds of data from and to Plone sites using a intermediate
 The main use-case is migrations since it enables you to for example migrate from Plone 4 with Archetypes and Python 2 to Plone 6 with Dexterity and Python 3 in one step.
 Most features use `plone.restapi` to serialize and deserialize data.
 
-See also the training on migrating with exportimport: https://training.plone.org/migrations/exportimport.html
+See also the training on migrating with ``exportimport``: https://training.plone.org/migrations/exportimport.html
 
 .. contents:: Contents
     :local:
@@ -85,6 +85,18 @@ The imports for members, relations, localroles and relations are linked to in th
 
 As a last step in a migration there is another view ``@@reset_dates`` that resets the modified date on imported content to the date initially contained in the imported json-file. This is necessary since varous changes during a migration will likely result in a updated modified-date. During import the original is stored as ``obj.modification_date_migrated`` on each new object and this view sets this date.
 
+Export- and import locations
+----------------------------
+
+If you select 'Save to file on server', the Export view will save json files in the <var> directory of your Plone instanc in /var/instance.
+The import view will look for  files under /var/instance/import.
+These directories will normally be different, under different Plone instances and possibly on different servers.
+
+You can set the environment variable 'COLLECTIVE_EXPORTIMPORT_CENTRAL_DIRECTORY' to add a 'shared' directory on one server or maybe network share.
+With this variable set, collective.exportimport will both save to and load .json files from the same server directory.
+This saves time not having to move .json files around from the export- to the import location.
+You should be aware that the Export views will overwrite any existing previous .json file export that have the same name.
+
 
 Use-cases
 =========
@@ -96,7 +108,7 @@ When a in-place-migration is not required you can choose this addon to migrate t
 
 * Export content from a Plone site (it supports Plone 4 and 5, Archetypes and Dexterity, Python 2 and 3).
 * Import the exported content into a new site (Plone 5.2+, Dexterity, Python 3)
-* Export and import relations, users and groups with their roles, translations, local roles, ordering, dedault-pages, comments, portlets and redirects.
+* Export and import relations, users and groups with their roles, translations, local roles, ordering, default-pages, comments, portlets and redirects.
 
 How to migrate additional features like Annotations or Marker Interfaces is discussed in the FAQ section.
 
@@ -107,7 +119,7 @@ You can use this addon to
 
 * Archive your content as json
 * Export data to prepare a migration to another system
-* Combine content from mutiple plone-sites into one.
+* Combine content from multiple plone-sites into one.
 * Import a plone-site as a subsite into another.
 * Import content from other systems as long as it fits the required format.
 * Update or replace existing data
@@ -156,8 +168,8 @@ To fix this you can check the checkbox "Modify exported data for migrations".
 This will modify the data during export:
 
 * Drop unused data (e.g. `next_item` and `components`)
-* Remove all relationfields
-* Change some fieldnames that changed between AT and DX
+* Remove all relation fields
+* Change some field names that changed between Archetypes and Dexterity
 
   * ``excludeFromNav`` → ``exclude_from_nav``
   * ``allowDiscussion`` → ``allow_discussion``
@@ -174,8 +186,8 @@ This will modify the data during export:
   * ``contactName`` → ``contact_name``
   * ``contactPhone`` → ``contact_phone``
 
-* Update view names on Folders and Collection thet changed since Plone 4.
-* Export ATTopic and their criteria to Collections with querystrings.
+* Update view names on Folders and Collection that changed since Plone 4.
+* Export ``ATTopic`` and their criteria to Collections with querystrings.
 * Update Collection-criteria.
 * Links and images in Richtext-Fields of content and portlets have changes since Plone 4.
   the view ``/@@fix_html`` allows you to fix these.
@@ -191,8 +203,8 @@ You can choose between four options how to deal with content that already exists
   * Update: Reuse and only overwrite imported data
   * Ignore: Create with a new id
 
-Imported content is initially created with ``invokeFactory`` using portal_type and id of the exported item before deserialing the rest of the data.
-You can set additional values by specifying a dict ``factory_kwargs`` that will be passed to the facory.
+Imported content is initially created with ``invokeFactory`` using portal_type and id of the exported item before deserializing the rest of the data.
+You can set additional values by specifying a dict ``factory_kwargs`` that will be passed to the factory.
 Like this you can set values on the imported object that are expected to be there by subscribers to IObjectAddedEvent.
 
 
@@ -222,6 +234,17 @@ The best way depends on how you are going to import the blobs:
 - Export as base-64 encoded strings: large download, but ``collective.exportimport`` can handle the import.
 - Export as blob paths: small download and ``collective.exportimport`` can handle the import, but you need to copy ``var/blobstorage`` to the Plone Site where you do the import or set the environment variable ``COLLECTIVE_EXPORTIMPORT_BLOB_HOME`` to the old blobstorage path: ``export COLLECTIVE_EXPORTIMPORT_BLOB_HOME=/path-to-old-instance/var/blobstorage``.
   To export the blob-path you do not need to have access to the blobs!
+
+
+Format of export and import of content
+======================================
+
+By default all content is exported to and imported from one large json-file.
+To inspect such very large json-files without performance-issues you can use klogg (https://klogg.filimonov.dev).
+
+Since version 1.10 collective.exportimport also supports exporting and importing each content item as a separate json-file.
+To use that select *Save each item as a separate file on the server* in the form or specify ``download_to_server=2`` when calling the export in python.
+In the import-form you can manually select a directory on the server or specify ``server_directory="/mydir"`` when calling the import in python.
 
 
 Customize export and import
@@ -356,7 +379,7 @@ Import Example
             """Use this to specify the container in which to create the item in.
             Return the container for this particular object.
             """
-            return return self.portal['imported_files']
+            return self.portal['imported_files']
 
 Register it:
 
@@ -558,7 +581,7 @@ Here we drop empty lines from the creators:
         item["creators"] = [i for i in item.get("creators", []) if i]
         return item
 
-This example migrates a PloneHelpCenter to a simple folder/document structure during import.
+This example migrates a ``PloneHelpCenter`` to a simple folder/document structure during import.
 There are a couple more types to handle (as folder or document) but you get the idea, don't you?
 
 .. code-block:: python
@@ -834,7 +857,7 @@ It may also happen, when you have validators that rely on content or configurati
 
 .. note::
 
-    For relationfields this is not necessary since relations are imported after content anyway!
+    For relation fields this is not necessary since relations are imported after content anyway!
 
 There are two ways to handle these issues:
 
@@ -1279,7 +1302,7 @@ This custom export exports and imports some selected settings and addons from a 
 **Import:**
 
 The import installs the addons and load the settings in the registry.
-Since Plone 5 portal_properties is no longer used.
+Since Plone 5 ``portal_properties`` is no longer used.
 
 .. code-block:: python
 
@@ -1450,7 +1473,7 @@ Export:
                 )
         return actions
 
-Import exported PloneFormGen data into Easyform:
+Import exported ``PloneFormGen`` data into ``Easyform``:
 
 .. code-block:: python
 
@@ -1864,6 +1887,265 @@ See https://6.docs.plone.org/backend/upgrading/version-specific-migration/migrat
         return soup.decode()
 
 
+Migrate very old Plone Versions with data created by collective.jsonify
+-----------------------------------------------------------------------
+
+Versions older than Plone 4 do not support ``plone.restapi`` which is required to serialize the content used by ``collective.exportimport``.
+
+To migrate Plone 1, 2 and 3 to Plone 6 you can use ``collective.jsonify`` for the export and ``collective.exportimport`` for the import.
+
+Export
+******
+
+Use https://github.com/collective/collective.jsonify to export content.
+
+You include the methods of ``collective.jsonify`` using `External Methods`.
+See https://github.com/collective/collective.jsonify/blob/master/docs/install.rst for more info.
+
+To work better with ``collective.exportimport`` you could extend the exported data using the feature ``additional_wrappers``.
+Add info on the parent of an item to make it easier for ``collective.exportimport`` to import the data.
+
+Here is a full example for `json_methods.py` which should be in `BUILDOUT_ROOT/parts/instance/Extensions/`
+
+.. code-block:: python
+
+    def extend_item(obj, item):
+        """Extend to work better well with collective.exportimport"""
+        from Acquisition import aq_parent
+        parent = aq_parent(obj)
+        item["parent"] = {
+            "@id": parent.absolute_url(),
+            "@type": getattr(parent, "portal_type", None),
+        }
+        if getattr(parent.aq_base, "UID", None) is not None:
+            item["parent"]["UID"] = parent.UID()
+
+        return item
+
+
+Here is a full example for ``json_methods.py`` which should be in ``<BUILDOUT_ROOT>/parts/instance/Extensions/``
+
+.. code-block:: python
+
+    from collective.jsonify.export import export_content as export_content_orig
+    from collective.jsonify.export import get_item
+
+    EXPORTED_TYPES = [
+        "Folder",
+        "Document",
+        "News Item",
+        "Event",
+        "Link",
+        "Topic",
+        "File",
+        "Image",
+        "RichTopic",
+    ]
+
+    EXTRA_SKIP_PATHS = [
+        "/Plone/archiv/",
+        "/Plone/do-not-import/",
+    ]
+
+    # Path from which to continue the export.
+    # The export walks the whole site respecting the order.
+    # It will ignore everything untill this path is reached.
+    PREVIOUS = ""
+
+    def export_content(self):
+        return export_content_orig(
+            self,
+            basedir="/var/lib/zope/json",
+            skip_callback=skip_item,
+            extra_skip_classname=[],
+            extra_skip_id=[],
+            extra_skip_paths=EXTRA_SKIP_PATHS,
+            batch_start=0,
+            batch_size=10000,
+            batch_previous_path=PREVIOUS or None,
+        )
+
+    def skip_item(item):
+        """Return True if the item should be skipped"""
+        portal_type = getattr(item, "portal_type", None)
+        if portal_type not in EXPORTED_TYPES:
+            return True
+
+    def extend_item(obj, item):
+        """Extend to work better well with collective.exportimport"""
+        from Acquisition import aq_parent
+        parent = aq_parent(obj)
+        item["parent"] = {
+            "@id": parent.absolute_url(),
+            "@type": getattr(parent, "portal_type", None),
+        }
+        if getattr(parent.aq_base, "UID", None) is not None:
+            item["parent"]["UID"] = parent.UID()
+
+        return item
+
+To use these create three "External Method" in the ZMI root at the Zope root to use that:
+
+* id: "export_content", module name: "json_methods", function name: "export_content"
+* id: "get_item", module name: "json_methods", function name: "get_item"
+* id: "extend_item", module name: "json_methods", function name: "extend_item"
+
+Then you can pass the extender to the export using a query-string: http://localhost:8080/Plone/export_content?additional_wrappers=extend_item
+
+
+Import
+******
+
+Two issues need to be dealt with to allow ``collective.exportimport`` to import the data generated by ``collective.jsonify``.
+
+#. The data is in directories instead of in one large json-file.
+#. The json is not in the expected format.
+
+Starting with version 1.8 you can pass an iterator to the import.
+
+You need to create a directory-walker that sorts the json-files the right way.
+By default it would import them in the order `1.json`, `10.json`, `100.json`, `101.json` and so on.
+
+.. code-block:: python
+
+    from pathlib import Path
+
+    def filesystem_walker(path=None):
+        root = Path(path)
+        assert(root.is_dir())
+        folders = sorted([i for i in root.iterdir() if i.is_dir() and i.name.isdecimal()], key=lambda i: int(i.name))
+        for folder in folders:
+            json_files = sorted([i for i in folder.glob("*.json") if i.stem.isdecimal()], key=lambda i: int(i.stem))
+            for json_file in json_files:
+                logger.debug("Importing %s", json_file)
+                item = json.loads(json_file.read_text())
+                item["json_file"] = str(json_file)
+                item = prepare_data(item)
+                if item:
+                    yield item
+
+The walker takes the path to be the root with one or more directories holding the json-files.
+The sorting of the files is done using the number in the filename.
+
+The method ``prepare_data`` modifies the data before passing it to the import.
+A very similar task is done by ``collective.exportimport`` during export.
+
+.. code-block:: python
+
+    def prepare_data(item):
+        """modify jsonify data to work with c.exportimport"""
+
+        # Drop relationfields or defer the import
+        item.pop("relatedItems", None)
+
+        mapping = {
+            # jsonify => exportimport
+            "_uid": "UID",
+            "_type": "@type",
+            "_path": "@id",
+            "_layout": "layout",
+            # AT fieldnames => DX fieldnames
+            "excludeFromNav": "exclude_from_nav",
+            "allowDiscussion": "allow_discussion",
+            "subject": "subjects",
+            "expirationDate": "expires",
+            "effectiveDate": "effective",
+            "creation_date": "created",
+            "modification_date": "modified",
+            "startDate": "start",
+            "endDate": "end",
+            "openEnd": "open_end",
+            "eventUrl": "event_url",
+            "wholeDay": "whole_day",
+            "contactEmail": "contact_email",
+            "contactName": "contact_name",
+            "contactPhone": "contact_phone",
+            "imageCaption": "image_caption",
+        }
+        for old, new in mapping.items():
+            item = migrate_field(item, old, new)
+
+        if item.get("constrainTypesMode", None) == 1:
+            item = migrate_field(item, "constrainTypesMode", "constrain_types_mode")
+        else:
+            item.pop("locallyAllowedTypes", None)
+            item.pop("immediatelyAddableTypes", None)
+            item.pop("constrainTypesMode", None)
+
+        if "id" not in item:
+            item["id"] = item["_id"]
+        return item
+
+
+    def migrate_field(item, old, new):
+        if item.get(old, _marker) is not _marker:
+            item[new] = item.pop(old)
+        return item
+
+You can pass the generator ``filesystem_walker`` to the import:
+
+.. code-block:: python
+
+    class ImportAll(BrowserView):
+
+        def __call__(self):
+            # ...
+            cfg = getConfiguration()
+            directory = Path(cfg.clienthome) / "import"
+
+            # import content
+            view = api.content.get_view("import_content", portal, request)
+            request.form["form.submitted"] = True
+            request.form["commit"] = 1000
+            view(iterator=filesystem_walker(directory / "mydata"))
+
+            # import default-pages
+            import_deferred = api.content.get_view("import_deferred", portal, request)
+            import_deferred()
+
+
+    class ImportDeferred(BrowserView):
+
+        def __call__(self):
+            self.title = "Import Deferred Settings (default pages)"
+            if not self.request.form.get("form.submitted", False):
+                return self.index()
+
+            for brain in api.content.find(portal_type="Folder"):
+                obj = brain.getObject()
+                annotations = IAnnotations(obj)
+                if DEFERRED_KEY not in annotations:
+                    continue
+
+                default = annotations[DEFERRED_KEY].pop("_defaultpage", None)
+                if default and default in obj:
+                    logger.info("Setting %s as default page for %s", default, obj.absolute_url())
+                    obj.setDefaultPage(default)
+                if not annotations[DEFERRED_KEY]:
+                    annotations.pop(DEFERRED_KEY)
+            api.portal.show_message("Done", self.request)
+            return self.index()
+
+``collective.jsonify`` puts the info on relations, translations and default-pages in the export-file.
+You can use the approach to defer imports to deal with that data after all items were imported.
+The example ``ImportDeferred`` above uses that approach to set the default pages.
+
+This ``global_obj_hook`` below stores that data in a annotation:
+
+.. code-block:: python
+
+    def global_obj_hook(self, obj, item):
+        # Store deferred data in an annotation.
+        keys = ["_defaultpage"]
+        data = {}
+        for key in keys:
+            if value := item.get(key, None):
+                data[key] = value
+        if data:
+            annotations = IAnnotations(obj)
+            annotations[DEFERRED_KEY] = data
+
+
 Written by
 ==========
 
@@ -1871,6 +2153,13 @@ Written by
     :target: https://www.starzel.de
     :alt: Starzel.de
 
+
+Translations
+============
+
+This product has been translated into
+
+- Spanish
 
 
 Installation
@@ -1888,14 +2177,14 @@ Install collective.exportimport by adding it to your buildout::
 
 and then running ``bin/buildout``
 
-You don't need to activate the add-on in the Site Setup Add-ons control panel to be able to use the forms @@export_content and @@import_content in your site.
+You don't need to activate the add-on in the Site Setup Add-ons control panel to be able to use the forms ``@@export_content`` and ``@@import_content`` in your site.
 
 You do need to add it to your buildout configuration and run buildout to make these features available at all. See https://docs.plone.org/manage/installing/installing_addons.html for details.
 
 Installing in Plone 4
 ---------------------
 
-collective.exportimport depends on plone.restapi . For Plone 4, you need to pin plone.restapi to 7.x . When installing plone.restapi version 7.x.x in Plone 4 you may need to add the following version pins to your buildout::
+``collective.exportimport`` depends on ``plone.restapi``. For Plone 4, you need to pin ``plone.restapi`` to 7.x . When installing ``plone.restapi`` version 7.x.x in Plone 4 you may need to add the following version pins to your buildout::
 
     [versions]
     PyJWT = 1.7.1
@@ -1932,8 +2221,7 @@ collective.exportimport depends on plone.restapi . For Plone 4, you need to pin 
     contextlib2 = 0.6.0.post1
 
 
-These versions are taken from the plone.restapi 7.x README: https://pypi.org/project/plone.restapi/7.8.1/
-
+These versions are taken from the ``plone.restapi`` 7.x README: https://pypi.org/project/plone.restapi/7.8.1/
 
 
 Contribute

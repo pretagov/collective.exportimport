@@ -1,6 +1,7 @@
 # -*- coding: UTF-8 -*-
 from Acquisition import aq_parent
 from bs4 import BeautifulSoup
+from collective.exportimport import _
 from collections import defaultdict
 from logging import getLogger
 from plone import api
@@ -34,23 +35,24 @@ IMAGE_SCALE_MAP = {
     "thumb": "thumb",
     "tile": "tile",
 }
+FALLBACK_VARIANT = "medium"
 
 
 class FixHTML(BrowserView):
     def __call__(self):
-        self.title = "Fix links to content and images in richtext"
+        self.title = _(u"Fix links to content and images in richtext")
         if not self.request.form.get("form.submitted", False):
             return self.index()
         commit = self.request.form.get("form.commit", True)
 
         msg = []
 
-        fix_count = fix_html_in_content_fields(commit=commit)
-        msg.append(u"Fixed HTML for {} fields in content items".format(fix_count))
+        fix_count = fix_html_in_content_fields(context=self.context, commit=commit)
+        msg.append(_(u"Fixed HTML for {} fields in content items").format(fix_count))
         logger.info(msg[-1])
 
-        fix_count = fix_html_in_portlets()
-        msg.append(u"Fixed HTML for {} portlets".format(fix_count))
+        fix_count = fix_html_in_portlets(context=self.context)
+        msg.append(_(u"Fixed HTML for {} portlets").format(fix_count))
         logger.info(msg[-1])
 
         # TODO: Fix html in tiles
@@ -161,12 +163,12 @@ def fix_tag_attr(soup, tag, attr, old_portal_url, obj=None):
             if not uuid:
                 target = find_object(obj, path)
                 if not target:
-                    logger.debug(u"Cannot find target obj for {path}".format(path=path))
+                    logger.debug("Cannot find target obj for %s", path)
                     continue
                 uuid = IUUID(target, None)
 
             if not uuid:
-                logger.debug("Cannot find target obj for {link}".format(link=link))
+                logger.debug("Cannot find target obj for %s", link)
                 continue
 
             # construct new link
@@ -218,11 +220,7 @@ def fix_tag_attr(soup, tag, attr, old_portal_url, obj=None):
         )
 
         if orig != content_link.decode():
-            logger.debug(
-                u"Changed {tag} {attr} from {orig} to {content_link}".format(
-                    tag=tag, attr=attr, orig=orig, content_link=content_link
-                )
-            )
+            logger.debug("Changed %s %s from %s to %s", tag, attr, orig, content_link)
 
 
 def find_object(base, path):
@@ -249,7 +247,9 @@ def find_object(base, path):
         return target
 
 
-def fix_html_in_content_fields(context=None, commit=True, fixers=None):
+def fix_html_in_content_fields(
+    context=None, commit=True, fixers=None, apply_default_fixer=True
+):
     """Fix html this after importing content into Plone 5 or 6.
     When calling this from your code you can pass additional fixers to modify the html.
 
@@ -298,7 +298,9 @@ def fix_html_in_content_fields(context=None, commit=True, fixers=None):
     else:
         if not isinstance(fixers, list):
             fixers = [fixers]
-        fixers = [html_fixer] + [i for i in fixers if callable(i)]
+        fixers = [i for i in fixers if callable(i)]
+        if apply_default_fixer:
+            fixers.insert(0, html_fixer)
 
     try:
         # Add img_variant_fixer if we are running this in Plone 6.x
@@ -318,6 +320,8 @@ def fix_html_in_content_fields(context=None, commit=True, fixers=None):
         "portal_type": list(types_with_richtext_fields.keys()),
         "sort_on": "path",
     }
+    if context is not None:
+        query["path"] = "/".join(context.getPhysicalPath())
     brains = catalog(**query)
     total = len(brains)
     logger.info("There are %s content items in total, starting migration...", len(brains))
@@ -414,9 +418,9 @@ def fix_html_in_portlets(context=None):
                                 fix_count_ref.append(True)
                                 setattr(assignment, fieldname, textvalue)
                                 logger.info(
-                                    "Fixed html for field {} of portlet at {}".format(
-                                        fieldname, obj.absolute_url()
-                                    )
+                                    "Fixed html for field %s of portlet at %s",
+                                    fieldname,
+                                    obj.absolute_url(),
                                 )
                         elif text and isinstance(text, str):
                             clean_text = html_fixer(text, obj)
@@ -430,29 +434,59 @@ def fix_html_in_portlets(context=None):
                                 fix_count_ref.append(True)
                                 setattr(assignment, fieldname, textvalue)
                                 logger.info(
-                                    "Fixed html for field {} of portlet {} at {}".format(
-                                        fieldname, str(assignment), obj.absolute_url()
-                                    )
+                                    "Fixed html for field %s of portlet %s at %s",
+                                    fieldname,
+                                    str(assignment),
+                                    obj.absolute_url(),
                                 )
 
-    portal = api.portal.get()
+    if context is None:
+        context = api.portal.get()
     fix_count = []
     f = lambda obj, path: get_portlets(obj, path, fix_count)
-    portal.ZopeFindAndApply(portal, search_sub=True, apply_func=f)
+    context.ZopeFindAndApply(context, search_sub=True, apply_func=f)
     return len(fix_count)
 
 
-def img_variant_fixer(text, obj=None):
+def _get_picture_variant_mapping():
+    """Get mapping from scale to picture variant.
+
+    In standard Plone 6.0 we get:
+
+        {'great': 'large',
+         'huge': 'large',
+         'large': 'large',
+         'larger': 'large',
+         'preview': 'small',
+         'teaser': 'medium'}
+    """
+    picture_variants = api.portal.get_registry_record("plone.picture_variants")
+    mapping = {}
+    for variant, value in picture_variants.items():
+        sourceset = value.get("sourceset")
+        if not sourceset:
+            continue
+        # sourceset is a list, although I expect it to only contain one dictionary.
+        # Sample:
+        # [{'additionalScales': ['large', 'great', 'huge'], 'scale': 'larger'}]
+        for source in sourceset:
+            default_scale = source.get("scale")
+            if default_scale:
+                mapping[default_scale] = variant
+            for scale in source.get("additionalScales", []):
+                if scale not in mapping:
+                    mapping[scale] = variant
+    return mapping
+
+
+def img_variant_fixer(text, obj=None, fallback_variant=None):
     """Set image-variants"""
     if not text:
         return text
 
-    picture_variants = api.portal.get_registry_record("plone.picture_variants")
-    scale_variant_mapping = {
-        k: v["sourceset"][0]["scale"] for k, v in picture_variants.items()
-    }
-    scale_variant_mapping["thumb"] = "mini"
-    fallback_variant = "preview"
+    scale_variant_mapping = _get_picture_variant_mapping()
+    if fallback_variant is None:
+        fallback_variant = FALLBACK_VARIANT
 
     soup = BeautifulSoup(text, "html.parser")
     for tag in soup.find_all("img"):

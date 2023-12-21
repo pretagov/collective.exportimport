@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from Acquisition import aq_base
 from App.config import getConfiguration
+from collective.exportimport import _
 from collective.exportimport import config
 from OFS.interfaces import IOrderedContainer
 from operator import itemgetter
@@ -78,9 +79,11 @@ class BaseExport(BrowserView):
     """Just DRY"""
 
     def download(self, data):
-        filename = u"{}.json".format(self.__name__)
+        filename = self.request.form.get("filename")
+        if not filename:
+            filename = u"{}.json".format(self.__name__)
         if not data:
-            msg = u"No data to export for {}".format(self.__name__)
+            msg = _(u"No data to export for {}").format(self.__name__)
             logger.info(msg)
             api.portal.show_message(msg, self.request)
             return self.request.response.redirect(self.request["ACTUAL_URL"])
@@ -97,7 +100,7 @@ class BaseExport(BrowserView):
             filepath = os.path.join(directory, filename)
             with open(filepath, "w") as f:
                 json.dump(data, f, sort_keys=True, indent=4)
-            msg = u"Exported to {}".format(filepath)
+            msg = _(u"Exported to {}").format(filepath)
             logger.info(msg)
             api.portal.show_message(msg, self.request)
             return self.request.response.redirect(self.request["ACTUAL_URL"])
@@ -121,7 +124,7 @@ class ExportRelations(BaseExport):
     def __call__(
         self, download_to_server=False, debug=False, include_linkintegrity=False
     ):
-        self.title = "Export relations"
+        self.title = _(u"Export relations")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -229,7 +232,7 @@ class ExportMembers(BaseExport):
     def __init__(self, context, request):
         super(ExportMembers, self).__init__(context, request)
         self.pms = api.portal.get_tool("portal_membership")
-        self.title = "Export members, groups and roles"
+        self.title = _(u"Export members, groups and roles")
         self.group_roles = {}
 
     def __call__(self, download_to_server=False):
@@ -327,7 +330,7 @@ class ExportTranslations(BaseExport):
     DROP_PATH = []
 
     def __call__(self, download_to_server=False):
-        self.title = "Export translations"
+        self.title = _(u"Export translations")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -409,7 +412,7 @@ class ExportLocalRoles(BaseExport):
     """Export all local roles"""
 
     def __call__(self, download_to_server=False):
-        self.title = "Export local roles"
+        self.title = _(u"Export local roles")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -466,7 +469,7 @@ class ExportOrdering(BaseExport):
     """Export all local roles"""
 
     def __call__(self, download_to_server=False):
-        self.title = "Export ordering"
+        self.title = _(u"Export ordering")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -502,7 +505,7 @@ class ExportDefaultPages(BaseExport):
     """Export all default_page settings."""
 
     def __call__(self, download_to_server=False):
-        self.title = "Export default pages"
+        self.title = _(u"Export default pages")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -581,7 +584,7 @@ class ExportDefaultPages(BaseExport):
 
 class ExportDiscussion(BaseExport):
     def __call__(self, download_to_server=False):
-        self.title = "Export comments"
+        self.title = _(u"Export comments")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -594,7 +597,9 @@ class ExportDiscussion(BaseExport):
     def all_discussions(self):
         results = []
         for brain in api.content.find(
-            object_provides=IContentish.__identifier__, sort_on="path"
+            object_provides=IContentish.__identifier__,
+            sort_on="path",
+            context=self.context,
         ):
             try:
                 obj = brain.getObject()
@@ -620,7 +625,7 @@ class ExportDiscussion(BaseExport):
 
 class ExportPortlets(BaseExport):
     def __call__(self, download_to_server=False):
-        self.title = "Export portlets"
+        self.title = _(u"Export portlets")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()
@@ -630,29 +635,45 @@ class ExportPortlets(BaseExport):
         logger.info(u"Exported info for %s items with portlets", len(data))
         self.download(data)
 
-    def all_portlets(context=None):
-        results = []
-
-        def get_portlets(obj, path):
-            uid = IUUID(obj, None)
-            if not uid:
-                return
-            portlets = export_local_portlets(obj)
-            blacklist = export_portlets_blacklist(obj)
-            obj_results = {}
-            if portlets:
-                obj_results["portlets"] = portlets
-            if blacklist:
-                obj_results["blacklist_status"] = blacklist
-            if obj_results:
-                obj_results["uuid"] = uid
-                results.append(obj_results)
-            return
-
+    def all_portlets(self):
+        self.results = []
         portal = api.portal.get()
-        portal.ZopeFindAndApply(portal, search_sub=True, apply_func=get_portlets)
-        return results
+        portal.ZopeFindAndApply(self.context, search_sub=True, apply_func=self.get_portlets)
+        self.get_root_portlets()
+        return self.results
 
+    def get_portlets(self, obj, path):
+        uid = IUUID(obj, None)
+        if not uid:
+            return
+        self._get_portlets(obj, uid)
+
+    def _get_portlets(self, obj, uid):
+        portlets = export_local_portlets(obj)
+        blacklist = export_portlets_blacklist(obj)
+        portlets = self.local_portlets_hook(portlets)
+        blacklist = self.portlets_blacklist_hook(blacklist)
+        obj_results = {}
+        if portlets:
+            obj_results["portlets"] = portlets
+        if blacklist:
+            obj_results["blacklist_status"] = blacklist
+        if obj_results:
+            obj_results["@id"] = obj.absolute_url()
+            obj_results["uuid"] = uid
+            self.results.append(obj_results)
+        return
+    
+    def get_root_portlets(self):
+        site = api.portal.get()
+        self._get_portlets(site, PORTAL_PLACEHOLDER)
+        return
+
+    def local_portlets_hook(self, portlets):
+        return portlets
+
+    def portlets_blacklist_hook(self, blacklist):
+        return blacklist
 
 def export_local_portlets(obj):
     """Serialize portlets for one content object
@@ -681,7 +702,7 @@ def export_local_portlets(obj):
             if manager_name not in items:
                 items[manager_name] = []
             values = {}
-            for name in schema.names():
+            for name in schema.names(all=True):
                 value = getattr(assignment, name, None)
                 if RelationValue is not None and isinstance(value, RelationValue):
                     value = value.to_object.UID()
@@ -755,7 +776,7 @@ def export_plone_redirects():
 
 class ExportRedirects(BaseExport):
     def __call__(self, download_to_server=False):
-        self.title = "Export redirects"
+        self.title = _(u"Export redirects")
         self.download_to_server = download_to_server
         if not self.request.form.get("form.submitted", False):
             return self.index()

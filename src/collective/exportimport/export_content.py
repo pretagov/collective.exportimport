@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from Acquisition import aq_base
 from App.config import getConfiguration
+from collective.exportimport import _
 from collective.exportimport import config
 from collective.exportimport.interfaces import IBase64BlobsMarker
 from collective.exportimport.interfaces import IMigrationMarker
@@ -13,6 +14,7 @@ from plone.i18n.normalizer.interfaces import IIDNormalizer
 from plone.restapi.interfaces import ISerializeToJson
 from plone.restapi.serializer.converters import json_compatible
 from plone.uuid.interfaces import IUUID
+from Products.CMFPlone.interfaces import IPloneSiteRoot
 from Products.CMFPlone.interfaces.constrains import ENABLED
 from Products.CMFPlone.interfaces.constrains import ISelectableConstrainTypes
 from Products.CMFPlone.utils import safe_unicode
@@ -110,6 +112,7 @@ class ExportContent(BrowserView):
         download_to_server=False,
         migration=True,
         include_revisions=False,
+        write_errors=False
     ):
         self.portal_type = portal_type or []
         if isinstance(self.portal_type, str):
@@ -119,7 +122,7 @@ class ExportContent(BrowserView):
 
         self.depth = int(depth)
         self.depth_options = (
-            ("-1", "unlimited"),
+            ("-1", _(u"unlimited")),
             ("0", "0"),
             ("1", "1"),
             ("2", "2"),
@@ -134,11 +137,12 @@ class ExportContent(BrowserView):
         )
         self.include_blobs = int(include_blobs)
         self.include_blobs_options = (
-            ("0", "as download urls"),
-            ("1", "as base-64 encoded strings"),
-            ("2", "as blob paths"),
+            ("0", _(u"as download urls")),
+            ("1", _(u"as base-64 encoded strings")),
+            ("2", _(u"as blob paths")),
         )
         self.include_revisions = include_revisions
+        self.write_errors = write_errors or self.request.form.get("write_errors")
 
         self.update()
 
@@ -146,7 +150,7 @@ class ExportContent(BrowserView):
             return self.template()
 
         if not self.portal_type:
-            api.portal.show_message(u"Select at least one type to export", self.request)
+            api.portal.show_message(_(u"Select at least one type to export"), self.request)
             return self.template()
 
         if self.include_blobs == 1:
@@ -165,16 +169,63 @@ class ExportContent(BrowserView):
             alsoProvides(self.request, IMigrationMarker)
 
         # to get a useful filename...
-        if self.portal_type and len(self.portal_type) == 1:
-            filename = self.portal_type[0]
-        else:
-            filename = self.path.split("/")[-1]
-        filename = "{}.json".format(filename)
+        filename = self.request.form.get("filename")
+        if not filename:
+            if self.portal_type and len(self.portal_type) == 1:
+                filename = self.portal_type[0]
+            else:
+                filename = self.path.split("/")[-1]
+            filename = "{}.json".format(filename)
 
+        self.errors = []
         content_generator = self.export_content()
 
         number = 0
-        if download_to_server:
+
+        # Export each item to a separate json-file
+        if download_to_server == 2:
+            directory = config.CENTRAL_DIRECTORY
+            if directory:
+                if not os.path.exists(directory):
+                    os.makedirs(directory)
+                    logger.info("Created central export/import directory %s", directory)
+            else:
+                cfg = getConfiguration()
+                directory = cfg.clienthome
+
+            # Use the filename (Plone.json) as target for files (Plone/1.json)
+            directory = os.path.join(directory, filename[:-5])
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                logger.info("Created directory to hold content: %s", directory)
+
+            self.start()
+            for number, datum in enumerate(content_generator, start=1):
+                filename = "{}.json".format(number)
+                filepath = os.path.join(directory, filename)
+                with open(filepath, "w") as f:
+                    json.dump(datum, f, sort_keys=True, indent=4)
+            if number:
+                if self.errors and self.write_errors:
+                    errors = {"unexported_paths": self.errors}
+                    with open(os.path.join(directory, "errors.json"), "w") as f:
+                        json.dump(errors, f, indent=4)
+            msg = _(u"Exported {} items ({}) to {} with {} errors").format(
+                number, ", ".join(self.portal_type), directory, len(self.errors)
+            )
+            logger.info(msg)
+            api.portal.show_message(msg, self.request)
+
+            if self.include_blobs == 1:
+                # remove marker interface
+                noLongerProvides(self.request, IBase64BlobsMarker)
+            elif self.include_blobs == 2:
+                noLongerProvides(self.request, IPathBlobsMarker)
+            self.finish()
+            self.request.response.redirect(self.request["ACTUAL_URL"])
+
+        # Export all items into one json-file in the filesystem
+        elif download_to_server:
             directory = config.CENTRAL_DIRECTORY
             if directory:
                 if not os.path.exists(directory):
@@ -193,9 +244,13 @@ class ExportContent(BrowserView):
                         f.write(",")
                     json.dump(datum, f, sort_keys=True, indent=4)
                 if number:
+                    if self.errors and self.write_errors:
+                        f.write(",")
+                        errors = {"unexported_paths": self.errors}
+                        json.dump(errors, f, indent=4)
                     f.write("]")
-            msg = u"Exported {} items ({}) as {} to {}".format(
-                number, ", ".join(self.portal_type), filename, filepath
+            msg = _(u"Exported {} items ({}) as {} to {} with {} errors").format(
+                number, ", ".join(self.portal_type), filename, filepath, len(self.errors)
             )
             logger.info(msg)
             api.portal.show_message(msg, self.request)
@@ -207,6 +262,8 @@ class ExportContent(BrowserView):
                 noLongerProvides(self.request, IPathBlobsMarker)
             self.finish()
             self.request.response.redirect(self.request["ACTUAL_URL"])
+
+        # Export as one json-file through the browser
         else:
             with tempfile.TemporaryFile(mode="w+") as f:
                 self.start()
@@ -217,8 +274,12 @@ class ExportContent(BrowserView):
                         f.write(",")
                     json.dump(datum, f, sort_keys=True, indent=4)
                 if number:
+                    if  self.errors and self.write_errors:
+                        f.write(",")
+                        errors = {"unexported_paths": self.errors}
+                        json.dump(errors, f, indent=4)
                     f.write("]")
-                msg = u"Exported {} {}".format(number, self.portal_type)
+                msg = _(u"Exported {} {} with {} errors").format(number, self.portal_type, len(self.errors))
                 logger.info(msg)
                 api.portal.show_message(msg, self.request)
                 response = self.request.response
@@ -288,10 +349,14 @@ class ExportContent(BrowserView):
             try:
                 obj = brain.getObject()
             except Exception:
-                logger.exception(u"Error getting brain %s", brain.getPath(), exc_info=True)
+                msg = u"Error getting brain {}".format(brain.getPath())
+                self.errors.append({'path':None, 'message': msg})
+                logger.exception(msg, exc_info=True)
                 continue
             if obj is None:
-                logger.error(u"brain.getObject() is None %s", brain.getPath())
+                msg = u"brain.getObject() is None {}".format(brain.getPath())
+                logger.error(msg)
+                self.errors.append({'path':None, 'message': msg})
                 continue
             obj = self.global_obj_hook(obj)
             if not obj:
@@ -299,7 +364,9 @@ class ExportContent(BrowserView):
             try:
                 self.safe_portal_type = fix_portal_type(obj.portal_type)
                 serializer = getMultiAdapter((obj, self.request), ISerializeToJson)
-                if getattr(aq_base(obj), "isPrincipiaFolderish", False):
+                if IPloneSiteRoot.providedBy(obj):
+                    item = serializer()
+                elif getattr(aq_base(obj), "isPrincipiaFolderish", False):
                     item = serializer()
                 else:
                     item = serializer()
@@ -307,7 +374,9 @@ class ExportContent(BrowserView):
 
                 yield item
             except Exception:
-                logger.exception(u"Error exporting %s", obj.absolute_url(), exc_info=True)
+                msg = u"Error exporting {}".format(obj.absolute_url())
+                self.errors.append({'path':obj.absolute_url(), 'message':msg})
+                logger.exception(msg, exc_info=True)
 
     def portal_types(self):
         """A list with info on all content types with existing items."""
@@ -464,8 +533,9 @@ class ExportContent(BrowserView):
         parent_url = obj.__parent__.absolute_url()
         if item["@id"] != obj_url:
             item["@id"] = obj_url
-        if item["parent"]["@id"] != parent_url:
-            item["parent"]["@id"] = parent_url
+        if "@id" in item["parent"]:
+            if item["parent"]["@id"] != parent_url:
+                item["parent"]["@id"] = parent_url
         return item
 
     def export_constraints(self, item, obj):
@@ -513,8 +583,12 @@ class ExportContent(BrowserView):
             comment = history_metadata.retrieve(version_id)["metadata"]["sys_metadata"]["comment"]
             if comment and comment != item["exportimport.versions"][version_id].get("changeNote"):
                 item["exportimport.versions"][version_id]["changeNote"] = comment
+            principal = history_metadata.retrieve(version_id)["metadata"]["sys_metadata"]["principal"]
+            if principal and principal != item["exportimport.versions"][version_id].get("changeActor"):
+                item["exportimport.versions"][version_id]["changeActor"] = principal
         # current changenote
         item["changeNote"] = history_metadata.retrieve(-1)["metadata"]["sys_metadata"]["comment"]
+        item["changeActor"] = history_metadata.retrieve(-1)["metadata"]["sys_metadata"]["principal"]
         return item
 
 

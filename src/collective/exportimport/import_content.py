@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from Acquisition import aq_base
+from collective.exportimport import _
 from collective.exportimport import config
 from collective.exportimport.interfaces import IMigrationMarker
 from datetime import datetime
@@ -42,6 +43,11 @@ try:
 except ImportError:
     HAS_COLLECTION_FIX = False
 
+if six.PY2:
+    from pathlib2 import Path
+else:
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
 BLOB_HOME = os.getenv("COLLECTIVE_EXPORTIMPORT_BLOB_HOME", "")
 
@@ -70,6 +76,31 @@ def get_absolute_blob_path(obj, blob_path):
     abs_path = os.path.join(fshelper.base_dir, blob_path)
     if os.path.isfile(abs_path):
         return abs_path
+
+
+def filesystem_walker(path=None):
+    root = Path(path)
+    assert(root.is_dir())
+
+    # first import json-files directly in the path
+    json_files = [i for i in root.glob("*.json") if i.stem.isdecimal()]
+    for json_file in sorted(json_files, key=lambda i: int(i.stem)):
+        logger.debug("Importing %s", json_file)
+        item = json.loads(json_file.read_text())
+        item["json_file"] = str(json_file)
+        if item:
+            yield item
+
+    # then import json-files of any containing folders
+    folders = [i for i in root.iterdir() if i.is_dir() and i.name.isdecimal()]
+    for folder in sorted(folders, key=lambda i: int(i.name)):
+        json_files = [i for i in folder.glob("*.json") if i.stem.isdecimal()]
+        for json_file in sorted(json_files, key=lambda i: int(i.stem)):
+            logger.debug("Importing %s", json_file)
+            item = json.loads(json_file.read_text())
+            item["json_file"] = str(json_file)
+            if item:
+                yield item
 
 
 class ImportContent(BrowserView):
@@ -105,7 +136,15 @@ class ImportContent(BrowserView):
     # Example: {'which_price': 'normal'}
     DEFAULTS = {}
 
-    def __call__(self, jsonfile=None, return_json=False, limit=None, server_file=None):
+    def __call__(
+        self,
+        jsonfile=None,
+        return_json=False,
+        limit=None,
+        server_file=None,
+        iterator=None,
+        server_directory=False,
+    ):
         request = self.request
         self.limit = limit
         self.commit = int(request["commit"]) if request.get("commit") else None
@@ -113,10 +152,10 @@ class ImportContent(BrowserView):
 
         self.handle_existing_content = int(request.get("handle_existing_content", 0))
         self.handle_existing_content_options = (
-            ("0", "Skip: Don't import at all"),
-            ("1", "Replace: Delete item and create new"),
-            ("2", "Update: Reuse and only overwrite imported data"),
-            ("3", "Ignore: Create with a new id"),
+            ("0", _("Skip: Don't import at all")),
+            ("1", _("Replace: Delete item and create new")),
+            ("2", _("Update: Reuse and only overwrite imported data")),
+            ("3", _("Ignore: Create with a new id")),
         )
         self.import_old_revisions = request.get("import_old_revisions", False)
 
@@ -132,7 +171,7 @@ class ImportContent(BrowserView):
             # This is an error.  But when you upload 10 GB AND select a server file,
             # it is a pity when you would have to upload again.
             api.portal.show_message(
-                u"json file was uploaded, so the selected server file was ignored.",
+                _(u"json file was uploaded, so the selected server file was ignored."),
                 request=self.request,
                 type="warn",
             )
@@ -149,7 +188,7 @@ class ImportContent(BrowserView):
                         close_file = True
                         break
             else:
-                msg = "File '{}' not found on server.".format(server_file)
+                msg = _("File '{}' not found on server.").format(server_file)
                 api.portal.show_message(msg, request=self.request, type="warn")
                 server_file = None
                 status = "error"
@@ -168,7 +207,7 @@ class ImportContent(BrowserView):
                 status = "error"
                 msg = str(e)
                 api.portal.show_message(
-                    u"Exception during uplad: {}".format(e),
+                    _(u"Exception during upload: {}").format(e),
                     request=self.request,
                 )
             else:
@@ -178,6 +217,16 @@ class ImportContent(BrowserView):
 
         if close_file:
             jsonfile.close()
+
+        if not jsonfile and iterator:
+            self.start()
+            msg = self.do_import(iterator)
+            api.portal.show_message(msg, self.request)
+
+        if server_directory:
+            self.start()
+            msg = self.do_import(filesystem_walker(server_directory))
+            api.portal.show_message(msg, self.request)
 
         self.finish()
 
@@ -226,6 +275,22 @@ class ImportContent(BrowserView):
                 f
                 for f in os.listdir(directory)
                 if f.endswith(".json") and f not in listing
+            ]
+        listing.sort()
+        return listing
+
+    @property
+    def server_directories(self):
+        # Adapted from ObjectManager.list_imports, which lists zexps.
+        listing = []
+        for directory in self.import_paths:
+            if not os.path.isdir(directory):
+                continue
+            # import pdb; pdb.set_trace()
+            listing += [
+                os.path.join(directory, f)
+                for f in os.listdir(directory)
+                if os.path.isdir(os.path.join(directory, f)) and f not in listing
             ]
         listing.sort()
         return listing
@@ -288,6 +353,7 @@ class ImportContent(BrowserView):
 
             if not index % 100:
                 logger.info("Imported {} items...".format(index))
+                transaction.savepoint()
 
             new_id = unquote(item["@id"]).split("/")[-1]
             if new_id != item["id"]:
@@ -392,60 +458,87 @@ class ImportContent(BrowserView):
                     item["@type"], container, item["id"], **factory_kwargs
                 )
 
-            new, item = self.global_obj_hook_before_deserializing(new, item)
-
-            # import using plone.restapi deserializers
-            deserializer = getMultiAdapter((new, self.request), IDeserializeFromJson)
             try:
-                new = deserializer(validate_all=False, data=item)
-            except Exception:
-                logger.warning("Cannot deserialize %s %s", item["@type"], item["@id"], exc_info=True)
+                new = self.handle_new_object(item, index, new)
+
+                added.append(new.absolute_url())
+
+                if self.commit and not len(added) % self.commit:
+                    self.commit_hook(added, index)
+            except Exception as e:
+                item_id = item['@id'].split('/')[-1]
+                container.manage_delObjects(item_id)
+                logger.warning(e)
+                logger.warning("Didn't add %s %s", item["@type"], item["@id"], exc_info=True)
                 continue
 
-            # Blobs can be exported as only a path in the blob storage.
-            # It seems difficult to dynamically use a different deserializer,
-            # based on whether or not there is a blob_path somewhere in the item.
-            # So handle this case with a separate method.
-            self.import_blob_paths(new, item)
-            self.import_constrains(new, item)
-
-            self.global_obj_hook(new, item)
-            self.custom_obj_hook(new, item)
-
-            uuid = self.set_uuid(item, new)
-
-            if uuid != item.get("UID"):
-                item["UID"] = uuid
-
-            # Try to set the original review_state
-            self.import_review_state(new, item)
-
-            # Import workflow_history last to drop entries created during import
-            self.import_workflow_history(new, item)
-
-            # Set modification and creation-date as a custom attribute as last step.
-            # These are reused and dropped in ResetModifiedAndCreatedDate
-            modified = item.get("modified", item.get("modification_date", None))
-            if modified:
-                modification_date = DateTime(dateutil.parser.parse(modified))
-                new.modification_date = modification_date
-                new.aq_base.modification_date_migrated = modification_date
-            created = item.get("created", item.get("creation_date", None))
-            if created:
-                creation_date = DateTime(dateutil.parser.parse(created))
-                new.creation_date = creation_date
-                new.aq_base.creation_date_migrated = creation_date
-            logger.info(
-                "Created item #{}: {} {}".format(
-                    index, item["@type"], new.absolute_url()
-                )
-            )
-            added.append(new.absolute_url())
-
-            if self.commit and not len(added) % self.commit:
-                self.commit_hook(added, index)
-
         return added
+
+    def handle_new_object(self, item, index, new):
+
+        new, item = self.global_obj_hook_before_deserializing(new, item)
+
+        # import using plone.restapi deserializers
+        deserializer = getMultiAdapter((new, self.request), IDeserializeFromJson)
+        try:
+            try:
+                new = deserializer(validate_all=False, data=item)
+            except TypeError as error:
+                if 'unexpected keyword argument' in str(error):
+                    self.request["BODY"] = json.dumps(item)
+                    new = deserializer(validate_all=False)
+                else:
+                    raise error
+        except Exception:
+            logger.warning("Cannot deserialize %s %s", item["@type"], item["@id"], exc_info=True)
+            raise
+
+        # Blobs can be exported as only a path in the blob storage.
+        # It seems difficult to dynamically use a different deserializer,
+        # based on whether or not there is a blob_path somewhere in the item.
+        # So handle this case with a separate method.
+        self.import_blob_paths(new, item)
+        self.import_constrains(new, item)
+
+        uuid = self.set_uuid(item, new)
+
+        if uuid != item.get("UID"):
+            # Happens only when we import content that doesn't have a UID
+            # for instance when importing from non Plone systems.
+            logger.info(
+                "Created new UID for item %s with type %s.",
+                item["@id"],
+                item["@type"]
+            )
+            item["UID"] = uuid
+
+        self.global_obj_hook(new, item)
+        self.custom_obj_hook(new, item)
+
+        # Try to set the original review_state
+        self.import_review_state(new, item)
+
+        # Import workflow_history last to drop entries created during import
+        self.import_workflow_history(new, item)
+
+        # Set modification and creation-date as a custom attribute as last step.
+        # These are reused and dropped in ResetModifiedAndCreatedDate
+        modified = item.get("modified", item.get("modification_date", None))
+        if modified:
+            modification_date = DateTime(dateutil.parser.parse(modified))
+            new.modification_date = modification_date
+            new.aq_base.modification_date_migrated = modification_date
+        created = item.get("created", item.get("creation_date", None))
+        if created:
+            creation_date = DateTime(dateutil.parser.parse(created))
+            new.creation_date = creation_date
+            new.aq_base.creation_date_migrated = creation_date
+        logger.info(
+            "Created item #{}: {} {}".format(
+                index, item["@type"], new.absolute_url()
+            )
+        )
+        return new
 
     def import_versions(self, container, item):
         """Import one item with all its revisions..
@@ -585,6 +678,7 @@ class ImportContent(BrowserView):
             "comment": comment,
             "timestamp": timestamp,
             "originator": None,
+            "principal": item.get("changeActor"),
         }
         rt._recursiveSave(
             obj, app_metadata={}, sys_metadata=sys_metadata, autoapply=True
@@ -722,9 +816,10 @@ class ImportContent(BrowserView):
         for key, value in workflow_history.items():
             # The time needs to be deserialized
             for history_item in value:
-                history_item["time"] = DateTime(
-                    dateutil.parser.parse(history_item["time"])
-                )
+                if "time" in history_item:
+                    history_item["time"] = DateTime(
+                        dateutil.parser.parse(history_item["time"])
+                    )
             result[key] = value
         if result:
             obj.workflow_history = PersistentMapping(result.items())
@@ -847,6 +942,9 @@ class ImportContent(BrowserView):
             if brains:
                 return brains[0].getObject()
 
+        if item["@type"] == "Plone Site":
+            return api.portal.get().__parent__
+
         if item["parent"]["@type"] == "Plone Site":
             return api.portal.get()
 
@@ -897,6 +995,9 @@ class ImportContent(BrowserView):
             # Get rid of it.
             parent_path = parent_path[1:]
 
+        # Handle folderish Documents provided by plone.volto
+        fti = getUtility(IDexterityFTI, name="Document")
+        parent_type = "Document" if fti.klass.endswith("FolderishDocument") else "Folder"
         # create original structure for imported content
         for element in parent_path:
             if element not in folder:
@@ -912,11 +1013,7 @@ class ImportContent(BrowserView):
                     id=element,
                     title=element,
                 )
-                logger.info(
-                    u"Created container {} to hold {}".format(
-                        folder.absolute_url(), item["@id"]
-                    )
-                )
+                logger.info(u"Created container %s to hold %s", folder.absolute_url(), item["@id"])
             else:
                 folder = folder[element]
 
@@ -951,16 +1048,16 @@ def fix_portal_type(portal_type):
 
 class ResetModifiedAndCreatedDate(BrowserView):
     def __call__(self):
-        self.title = "Reset creation and modification date"
-        self.help_text = """<p>Creation- and modification-dates are changed during import.
-        This resets them to the original dates of the imported content.</p>"""
+        self.title = _(u"Reset creation and modification date")
+        self.help_text = _("<p>Creation- and modification-dates are changed during import." \
+                         "This resets them to the original dates of the imported content.</p>")
         if not self.request.form.get("form.submitted", False):
             return self.index()
 
         portal = api.portal.get()
 
         portal.ZopeFindAndApply(portal, search_sub=True, apply_func=reset_dates)
-        msg = "Finished resetting creation and modification dates."
+        msg = _(u"Finished resetting creation and modification dates.")
         logger.info(msg)
         api.portal.show_message(msg, self.request)
         return self.index()
@@ -982,12 +1079,12 @@ def reset_dates(obj, path):
 
 class FixCollectionQueries(BrowserView):
     def __call__(self):
-        self.title = "Fix collection queries"
-        self.help_text = """<p>This fixes invalid collection-criteria that were imported from Plone 4 or 5.</p>"""
+        self.title = _(u"Fix collection queries")
+        self.help_text = _(u"""<p>This fixes invalid collection-criteria that were imported from Plone 4 or 5.</p>""")
 
         if not HAS_COLLECTION_FIX:
             api.portal.show_message(
-                "plone.app.querystring.upgrades.fix_select_all_existing_collections is not available",
+                _(u"plone.app.querystring.upgrades.fix_select_all_existing_collections is not available"),
                 self.request,
             )
             return self.index()
@@ -997,6 +1094,6 @@ class FixCollectionQueries(BrowserView):
 
         portal = api.portal.get()
         fix_select_all_existing_collections(portal)
-        msg = "Finished fixing collection queries."
+        msg = _("Finished fixing collection queries.")
         api.portal.show_message(msg, self.request)
         return self.index()
