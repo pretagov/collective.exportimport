@@ -161,6 +161,10 @@ class CollectionFieldSerializer(DefaultFieldSerializer):
                     # TODO: handle defaultFactory?
                     if v not in [self.field.default, self.field.missing_value]:
                         logger.info("Term lookup error: %r not in vocabulary %r for field %r of %r", v, value_type.vocabularyName, self.field.__name__, self.context)
+                except AttributeError:
+                    if v not in [self.field.default, self.field.missing_value]:
+                        logger.info("Term lookup error: cannot call getTerm on vocabulary %r  (%r for field %r of %r)", v, value_type.vocabularyName, self.field.__name__, self.context)
+
         return json_compatible(value)
 
 
