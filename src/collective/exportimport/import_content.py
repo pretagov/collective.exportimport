@@ -575,6 +575,7 @@ class ImportContent(BrowserView):
             policy = "at_edit_autoversion"
             repo_tool.removePolicyFromContentType(item["@type"], policy)
 
+        lastversion = {}
         for index, version in enumerate(item["exportimport.versions"].values()):
             initial = index == 0
             version = self.global_dict_hook(version)
@@ -593,8 +594,14 @@ class ImportContent(BrowserView):
                 if uuid != item["UID"]:
                     item["UID"] = uuid
             else:
-                new = container.get(item["id"])
-
+                if lastversion['id'] == version['id']:
+                    new = container.get(version["id"])
+                else:
+                    # This means an item has changed id...
+                    new = container.get(lastversion['id'])
+            lastversion = version
+            if new is None:
+                import pdb; pdb.set_trace()
             # import using plone.restapi deserializers
             deserializer = getMultiAdapter((new, self.request), IDeserializeFromJson)
             try:
@@ -612,6 +619,9 @@ class ImportContent(BrowserView):
 
         # Finally create the current version
         new = container.get(item["id"])
+        if new is None and lastversion:
+            new = container.get(lastversion['id'])
+
         deserializer = getMultiAdapter((new, self.request), IDeserializeFromJson)
         try:
             new = deserializer(validate_all=False, data=item)
@@ -1008,12 +1018,19 @@ class ImportContent(BrowserView):
         # create original structure for imported content
         for element in parent_path:
             if element not in folder:
-                folder = api.content.create(
+                # Handle Volto not using 'Folder' for it's type and having support for folderish pages
+                parent_type = (
+                    "Folder"
+                    if getattr(aq_base(folder), "isPrincipiaFolderish", False)
+                    else "Document"
+                )
+                newfolder = api.content.create(
                     container=folder,
                     type=parent_type,
                     id=element,
                     title=element,
                 )
+                folder = newfolder
                 logger.info(
                     u"Created container %s to hold %s",
                     folder.absolute_url(),
