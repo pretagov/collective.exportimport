@@ -615,6 +615,14 @@ class ImportContent(BrowserView):
                 )
                 return
 
+            if new.id != version['id']:
+                # In some scenario the object created is not aligning.
+                # Continuing here will fail.
+                # At some point the deserializer is changing the id, possibly
+                # due to reserved words. Only noticed on content with id='start'
+                # Filthy hack to just rename it to what it's supposed to be :(
+                api.content.rename(obj=new, new_id=version['id'], safe_id=False)
+
             self.save_revision(new, version, initial)
 
         # Finally create the current version
