@@ -589,7 +589,7 @@ class ImportContent(BrowserView):
 
             if initial and not self.update_existing:
                 # initial version
-                new = _createObjectByType(item["@type"], container, item["id"])
+                new = _createObjectByType(item["@type"], container, version["id"])
                 uuid = self.set_uuid(item, new)
                 if uuid != item["UID"]:
                     item["UID"] = uuid
