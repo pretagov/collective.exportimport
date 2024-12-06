@@ -122,7 +122,7 @@ class ExportRelations(BaseExport):
     """Export all relations"""
 
     def __call__(
-        self, download_to_server=False, debug=False, include_linkintegrity=False
+        self, download_to_server=False, debug=True, include_linkintegrity=False
     ):
         self.title = _(u"Export relations")
         self.download_to_server = download_to_server
@@ -202,9 +202,29 @@ class ExportRelations(BaseExport):
                                 item["from_path"] = from_brain[0].getPath()
                                 item["to_path"] = to_brain[0].getPath()
                             item = self.reference_hook(item)
-                            if item is None:
-                                continue
-                            results.append(item)
+                            if item is not None:
+                                results.append(item)
+
+                        # if a relationship has more than one item, only one seems to get cataloged
+                        # don't know where the bug is upstream but can be resolved by iterating each item here
+                        obj = from_brain[0].getObject()
+                        objrel = getattr(obj, rel.from_attribute, None)
+                        if objrel and isinstance(objrel, list) and len(objrel) > 1:
+                            # Now we know we have extra relations
+                            for x in objrel[1:]:
+                                to_brain = portal_catalog(path=dict(query=x.to_path, depth=0))
+                                item = {
+                                        "from_uuid": from_brain[0].UID,
+                                        "to_uuid": to_brain[0].UID,
+                                        "relationship": rel.from_attribute,
+                                    }
+                                if debug:
+                                    item["from_path"] = from_brain[0].getPath()
+                                    item["to_path"] = to_brain[0].getPath()
+                                item = self.reference_hook(item)
+                                if item is not None:
+                                    results.append(item)
+
 
         return results
 
